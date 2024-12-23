@@ -1,0 +1,6 @@
+/.idea
+/_tmp
+/bin
+/adcm.yaml
+
+*.key
