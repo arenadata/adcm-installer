@@ -67,13 +67,25 @@ func (c Compose) Down(ctx context.Context, projectName string, volumes bool) err
 }
 
 func NewProject(name string, conf *models.Config) (*types.Project, error) {
+	const defaultNetwork = "adcm_default"
 	project := &types.Project{
 		Name:     name,
 		Services: map[string]types.ServiceConfig{},
+		Networks: map[string]types.NetworkConfig{
+			defaultNetwork: {Name: defaultNetwork},
+		},
 	}
 
 	adcm := NewService(project.Name, models.ADCMServiceName, conf.ADCM.Image.String())
-	adcm.CapDrop = []string{"ALL"}
+	//adcm.CapDrop = []string{"ALL"}
+	adcm.Networks = map[string]*types.ServiceNetworkConfig{defaultNetwork: {}}
+	adcm.Ports = []types.ServicePortConfig{{
+		Protocol:  "tcp",
+		Target:    8000,
+		Published: "8000",
+		Mode:      "ingress",
+	}}
+	adcm.SecurityOpt = []string{"no-new-privileges"}
 
 	envMappings := []string{
 		"DB_HOST=" + *conf.Postgres.Connection.Host,
@@ -110,12 +122,14 @@ func NewProject(name string, conf *models.Config) (*types.Project, error) {
 		pg := NewService(project.Name, *pgHost, conf.Postgres.Image.String())
 		pg.CapDrop = []string{"ALL"}
 		pg.User = "postgres:postgres"
+		pg.Networks = map[string]*types.ServiceNetworkConfig{defaultNetwork: {}}
 
 		pg.Environment = types.NewMappingWithEquals([]string{
 			"PGUSER=" + conf.Secrets.Postgres.Login,
 			"POSTGRES_DB=" + *conf.Postgres.Connection.Database,
 			"POSTGRES_USER=" + conf.Secrets.Postgres.Login,
 			"POSTGRES_PASSWORD=" + conf.Secrets.Postgres.Password,
+			"POSTGRES_HOST_AUTH_METHOD=md5",
 		})
 
 		if !utils.PtrIsEmpty(conf.Postgres.Volume) {
@@ -149,7 +163,6 @@ func NewProject(name string, conf *models.Config) (*types.Project, error) {
 			Restart:   true,
 		}
 
-		adcm.Labels.Add(api.DependenciesLabel, fmt.Sprintf("%s:%s:%t", *pgHost, d.Condition, d.Restart))
 		adcm.DependsOn = types.DependsOnConfig{
 			*pgHost: d,
 		}
