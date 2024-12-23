@@ -112,7 +112,7 @@ func pgCredentials(sec *models.Secrets) error {
 		return err
 	}
 
-	fmt.Print("Enter PostgreSQL Password: ")
+	fmt.Print("Enter PostgreSQL Password (default: random): ")
 	bytePassword, err := term.ReadPassword(syscall.Stdin)
 	if err != nil {
 		return err
