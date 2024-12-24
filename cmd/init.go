@@ -21,86 +21,90 @@ import (
 var initCmd = &cobra.Command{
 	Use:   "init",
 	Short: "A brief description of your command",
-	Run: func(cmd *cobra.Command, args []string) {
-		configFile, _ := cmd.Flags().GetString("config")
-
-		forceRewrite, _ := cmd.Flags().GetBool("force")
-		_, err := os.Stat(configFile)
-		if err == nil && !forceRewrite {
-			log.Fatalf("config file %s already exists", configFile)
-		}
-
-		ageKey, _ := cmd.Flags().GetString("age-key")
-		ageKeyFile, _ := cmd.Flags().GetString("age-key-file")
-		isAgeKeyFileExists := utils.PathExists(ageKeyFile)
-		if len(ageKey) == 0 && len(ageKeyFile) > 0 && isAgeKeyFileExists {
-			ageKey, err = readAgeKey(ageKeyFile)
-			if err != nil {
-				log.Fatalf("read AGE key from %q: %v", ageKeyFile, err)
-			}
-		}
-
-		ageCrypt, err := crypt.New(ageKey)
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		sec := models.NewSecrets(ageCrypt)
-		models.SetDefaultSecrets(sec)
-
-		interactive, _ := cmd.Flags().GetBool("interactive")
-		if interactive {
-			if err = pgCredentials(sec); err != nil {
-				log.Fatal(err)
-			}
-		}
-
-		var configNode *yaml.Node
-		slimConfig, _ := cmd.Flags().GetBool("slim")
-		if slimConfig {
-			configNode = new(yaml.Node)
-			err = configNode.Encode(&models.Config{Secrets: sec})
-		} else {
-			conf := models.FullConfigWithDefaults()
-			conf.Secrets = sec
-			configNode, err = models.SetConfigComments(conf)
-		}
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		fi, err := os.OpenFile(configFile, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0640)
-		if err != nil {
-			log.Fatal(err)
-		}
-		defer func() {
-			if err := fi.Close(); err != nil {
-				log.Fatal(err)
-			}
-		}()
-
-		if !isAgeKeyFileExists {
-			if err = saveAgeKey(ageKeyFile, ageCrypt); err != nil {
-				log.Fatal(err)
-			}
-		}
-
-		confEnc := yaml.NewEncoder(fi)
-		confEnc.SetIndent(2)
-		if err := confEnc.Encode(configNode); err != nil {
-			log.Fatal(err)
-		}
-	},
+	Run:   initProject,
 }
 
 func init() {
 	rootCmd.AddCommand(initCmd)
-	initCmd.Flags().BoolP("force", "f", false, "force overwrite existing config")
-	initCmd.Flags().Bool("slim", false, "create a minimal config file")
-	initCmd.Flags().BoolP("interactive", "i", false, "interactive mode (set sensitive data)")
-	initCmd.Flags().String("age-key", "", "set specific private age key")
-	initCmd.Flags().String("age-key-file", models.AGEKeyFile, "read private age key from file")
+	initCmd.Flags().StringP("config", "c", models.ADCMConfigFile, "Path to save configuration file")
+	initCmd.Flags().BoolP("force", "f", false, "Force overwrite existing config")
+	initCmd.Flags().BoolP("interactive", "i", false, "Interactive mode (set sensitive data)")
+	initCmd.Flags().String("age-key", "", "Set specific private age key. Can be set by AGE_KEY environment variable")
+	initCmd.Flags().String("age-key-file", models.AGEKeyFile, "Read private age key from file")
 	initCmd.MarkFlagsMutuallyExclusive("age-key", "age-key-file")
+}
+
+func initProject(cmd *cobra.Command, _ []string) {
+	logger := log.WithField("command", "init")
+
+	configFile, _ := cmd.Flags().GetString("config")
+	isConfigFileExists, err := utils.FileExists(configFile)
+	if err != nil {
+		logger.Fatal(err)
+	}
+
+	forceRewrite, _ := cmd.Flags().GetBool("force")
+	if isConfigFileExists && !forceRewrite {
+		logger.Fatalf("config file %s already exists", configFile)
+	} else if isConfigFileExists {
+		logger.Warnf("config file %s will be rewriten", configFile)
+	}
+
+	logger.Debug("Get AGE key")
+	ageCrypt, err := getAgeKey(cmd, logger)
+	if err != nil {
+		logger.Fatal(err)
+	}
+	if ageCrypt == nil {
+		logger.Debug("Create new AGE key")
+		ageCrypt, err = crypt.New()
+		if err != nil {
+			logger.Fatal(err)
+		}
+
+		ageKeyFile, _ := cmd.Flags().GetString("age-key-file")
+		logger.Debugf("Create new AGE key file: %q", ageKeyFile)
+		if err = saveAgeKey(ageKeyFile, ageCrypt); err != nil {
+			logger.Fatal(err)
+		}
+	}
+
+	sec := models.NewSecrets(ageCrypt)
+	models.SetDefaultSecrets(sec.SensitiveData)
+
+	interactive, _ := cmd.Flags().GetBool("interactive")
+	if interactive {
+		logger.Debug("Interactive mode enabled")
+		if err = pgCredentials(sec); err != nil {
+			logger.Fatal(err)
+		}
+	}
+
+	conf := models.FullConfigWithDefaults()
+	conf.Secrets = sec
+
+	logger.Debug("Set comments to config")
+	configNode, err := models.SetConfigComments(conf)
+	if err != nil {
+		logger.Fatal(err)
+	}
+
+	fi, err := os.OpenFile(configFile, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0640)
+	if err != nil {
+		logger.Fatal(err)
+	}
+	defer func() {
+		if err = fi.Close(); err != nil {
+			logger.Fatal(err)
+		}
+	}()
+
+	logger.Debugf("Write config file %q", configFile)
+	confEnc := yaml.NewEncoder(fi)
+	confEnc.SetIndent(2)
+	if err = confEnc.Encode(configNode); err != nil {
+		logger.Fatal(err)
+	}
 }
 
 func pgCredentials(sec *models.Secrets) error {
@@ -112,7 +116,7 @@ func pgCredentials(sec *models.Secrets) error {
 		return err
 	}
 
-	fmt.Print("Enter PostgreSQL Password (default: random): ")
+	fmt.Print("Enter PostgreSQL Password (default: random generated): ")
 	bytePassword, err := term.ReadPassword(syscall.Stdin)
 	if err != nil {
 		return err
@@ -120,15 +124,45 @@ func pgCredentials(sec *models.Secrets) error {
 
 	login = strings.TrimSpace(login)
 	if len(login) > 0 {
-		sec.Postgres.Login = login
+		sec.SensitiveData.Postgres.Login = login
 	}
 
 	password := strings.TrimSpace(string(bytePassword))
 	if len(password) > 0 {
-		sec.Postgres.Password = password
+		sec.SensitiveData.Postgres.Password = password
 	}
 
 	return nil
+}
+
+func getAgeKey(cmd *cobra.Command, logger *log.Entry) (*crypt.AgeCrypt, error) {
+	ageKey, _ := cmd.Flags().GetString("age-key")
+	if len(ageKey) == 0 {
+		ageKey = os.Getenv("AGE_KEY")
+	}
+	if len(ageKey) > 0 {
+		log.Debug("AGE key provided")
+		ageCrypt, err := crypt.FromString(ageKey)
+		return ageCrypt, err
+	}
+
+	ageKeyFile, _ := cmd.Flags().GetString("age-key-file")
+	isAgeKeyFileExists, err := utils.FileExists(ageKeyFile)
+	if err != nil {
+		return nil, err
+	}
+	if isAgeKeyFileExists {
+		logger.Debugf("Using AGE key file %q", ageKeyFile)
+		ageKey, err = readAgeKey(ageKeyFile)
+		if err != nil {
+			return nil, fmt.Errorf("read AGE key from file %q failed: %v", ageKeyFile, err)
+		}
+
+		ageCrypt, err := crypt.FromString(ageKey)
+		return ageCrypt, err
+	}
+
+	return nil, nil
 }
 
 func readAgeKey(path string) (string, error) {

@@ -13,19 +13,19 @@ type AgeCrypt struct {
 	*age.X25519Identity
 }
 
-func New(identities ...string) (*AgeCrypt, error) {
-	var err error
-	var id *age.X25519Identity
-
-	if len(identities) > 0 && len(identities[0]) > 0 {
-		id, err = age.ParseX25519Identity(identities[0])
-	} else {
-		id, err = age.GenerateX25519Identity()
-	}
+func New() (*AgeCrypt, error) {
+	id, err := age.GenerateX25519Identity()
 	if err != nil {
 		return nil, err
 	}
+	return &AgeCrypt{id}, nil
+}
 
+func FromString(s string) (*AgeCrypt, error) {
+	id, err := age.ParseX25519Identity(s)
+	if err != nil {
+		return nil, err
+	}
 	return &AgeCrypt{id}, nil
 }
 

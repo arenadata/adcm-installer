@@ -6,7 +6,7 @@ make
 ```
 
 ### Usage
-Run ADCM
+Run ADCM in dev mode (each time you run the `adcm up` command, a new database will be created)
 ```shell
 # see `adcm up --help` command
 adcm up
@@ -14,10 +14,16 @@ adcm up
 
 Stop ADCM
 ```shell
+# see `adcm down --help` command
 adcm down
 ```
 
-Configure project
+Configure project (persistent installation)
+```shell
+# fast start
+adcm up --init
+```
+
 ```shell
 # see `adcm init --help` command
 adcm init -i

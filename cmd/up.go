@@ -2,11 +2,11 @@ package cmd
 
 import (
 	"os"
-	"strings"
 
 	"github.com/arenadata/adcm-installer/compose"
 	"github.com/arenadata/adcm-installer/crypt"
 	"github.com/arenadata/adcm-installer/models"
+	"github.com/arenadata/adcm-installer/utils"
 
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -17,72 +17,80 @@ import (
 var upCmd = &cobra.Command{
 	Use:   "up",
 	Short: "A brief description of your command",
-	Run: func(cmd *cobra.Command, args []string) {
-		ageKey, _ := cmd.Flags().GetString("age-key")
+	Run: func(cmd *cobra.Command, _ []string) {
+		logger := log.WithField("command", "up")
 
-		ageKeyFile, _ := cmd.Flags().GetString("age-key-file")
-		if _, err := os.Stat(ageKeyFile); err == nil && len(ageKey) == 0 {
-			log.Debugf("Using AGE file: %s", ageKeyFile)
-			b, err := os.ReadFile(ageKeyFile)
-			if err != nil {
-				log.Fatal(err)
-			}
-			for _, line := range strings.Split(string(b), "\n") {
-				line = strings.TrimSpace(line)
-				if strings.HasPrefix(line, "#") {
-					continue
-				}
-				ageKey = strings.TrimSpace(line)
-				break
-			}
+		if initConfig, _ := cmd.Flags().GetBool("init"); initConfig {
+			initCmd.Run(cmd, nil)
 		}
 
-		ageCrypt, err := crypt.New(ageKey)
+		configFile, _ := cmd.Flags().GetString("config")
+		isConfigFileExists, err := utils.FileExists(configFile)
 		if err != nil {
-			log.Fatal(err)
+			logger.Fatal(err)
+		}
+
+		logger.Debug("Get AGE key")
+		ageCrypt, err := getAgeKey(cmd, logger)
+		if err != nil {
+			logger.Fatal(err)
+		}
+		if ageCrypt == nil {
+			logger.Debug("Create new AGE key")
+			ageCrypt, err = crypt.New()
+			if err != nil {
+				logger.Fatal(err)
+			}
 		}
 
 		config := &models.Config{
 			Secrets: models.NewSecrets(ageCrypt),
 		}
-		configFile, _ := cmd.Flags().GetString("config")
-		if _, err = os.Stat(configFile); err == nil {
-			log.Debugf("Using config file: %s", configFile)
-			fi, err := os.Open(configFile)
-			if err != nil {
-				log.Fatal(err)
-			}
-			defer func() { _ = fi.Close() }()
 
-			dec := yaml.NewDecoder(fi)
-			dec.KnownFields(true)
-			if err = dec.Decode(&config); err != nil {
-				log.Fatal(err)
+		if isConfigFileExists {
+			logger.Debugf("Using config file %q", configFile)
+			if err = readYamlFile(configFile, config); err != nil {
+				logger.Fatal(err)
 			}
 		}
 
-		models.SetDefaultSecrets(config.Secrets)
+		models.SetDefaultSecrets(config.Secrets.SensitiveData)
 		models.SetDefaultsConfig(config)
 
-		prj, err := compose.NewProject(compose.ProjectName, config)
+		logger.Debug("Initialize ADCM project from config")
+		prj, err := compose.NewADCMProject(config)
 		if err != nil {
-			log.Fatal(err)
+			logger.Fatal(err)
 		}
 
 		comp, err := compose.NewComposeService()
 		if err != nil {
-			log.Fatal(err)
+			logger.Fatal(err)
 		}
 
 		if err = comp.Up(cmd.Context(), prj); err != nil {
-			log.Fatal(err)
+			logger.Fatal(err)
 		}
 	},
 }
 
 func init() {
 	rootCmd.AddCommand(upCmd)
-	upCmd.Flags().String("age-key", "", "config file path")
-	upCmd.Flags().String("age-key-file", models.AGEKeyFile, "config file path")
+	upCmd.Flags().StringP("config", "c", models.ADCMConfigFile, "Path to configuration file")
+	upCmd.Flags().String("age-key", "", "Set specific private age key. Can be set by AGE_KEY environment variable")
+	upCmd.Flags().String("age-key-file", models.AGEKeyFile, "Private AGE key file")
+	upCmd.Flags().Bool("init", false, "Initialize new project")
 	upCmd.MarkFlagsMutuallyExclusive("age-key", "age-key-file")
+}
+
+func readYamlFile(file string, out any) error {
+	fi, err := os.Open(file)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = fi.Close() }()
+
+	dec := yaml.NewDecoder(fi)
+	dec.KnownFields(true)
+	return dec.Decode(out)
 }

@@ -5,16 +5,23 @@ import (
 )
 
 const (
+	ProjectName = "default"
+
 	ADCMConfigFile = "adcm.yaml"
 	AGEKeyFile     = "age.key"
 
-	ADImageRegistry  = "hub.arenadata.io"
-	ADCMServiceName  = "adcm"
-	ADCMImageName    = "adcm/adcm"
-	ADCMImageTag     = "2.4"
-	ADCMVolumeName   = "adcm"
-	ADCMVolumeTarget = "/adcm/data"
+	DefaultImageTag = "latest"
 
+	ADImageRegistry         = "hub.arenadata.io"
+	ADCMServiceName         = "adcm"
+	ADCMImageName           = "adcm/adcm"
+	ADCMImageTag            = "2.4"
+	ADCMVolumeName          = "adcm"
+	ADCMVolumeTarget        = "/adcm/data"
+	ADCMPublishPort  uint16 = 8000
+	ADCMPortPattern         = "%d:8000"
+
+	PostgresServiceName  = "postgres"
 	PostgresImageName    = "postgres"
 	PostgresImageTag     = "16-alpine"
 	PostgresInstall      = true
@@ -29,6 +36,7 @@ const (
 
 func FullConfigWithDefaults() *Config {
 	return &Config{
+		Project:  utils.Ptr(ProjectName),
 		Registry: utils.Ptr(""),
 		ADCM: &ADCMConfig{
 			Image: &Image{
@@ -36,7 +44,8 @@ func FullConfigWithDefaults() *Config {
 				Name:     utils.Ptr(ADCMImageName),
 				Tag:      utils.Ptr(ADCMImageTag),
 			},
-			Volume: utils.Ptr(ADCMVolumeName + ":" + ADCMVolumeTarget),
+			Publish: utils.Ptr(ADCMPublishPort),
+			Volume:  utils.Ptr(ADCMVolumeName + ":" + ADCMVolumeTarget),
 		},
 		Postgres: &PostgresConfig{
 			Install: utils.Ptr(PostgresInstall),
@@ -59,6 +68,10 @@ func FullConfigWithDefaults() *Config {
 }
 
 func SetDefaultsConfig(in *Config) {
+	if in.Project == nil {
+		in.Project = utils.Ptr(ProjectName)
+	}
+
 	if in.ADCM == nil {
 		in.ADCM = &ADCMConfig{}
 	}
@@ -83,9 +96,13 @@ func SetDefaultsConfig(in *Config) {
 		in.ADCM.Image.Tag = utils.Ptr(ADCMImageTag)
 	}
 
-	if utils.PtrIsEmpty(in.ADCM.Volume) {
-		in.ADCM.Volume = utils.Ptr(ADCMVolumeName + ":" + ADCMVolumeTarget)
+	if utils.PtrIsEmpty(in.ADCM.Publish) {
+		in.ADCM.Publish = utils.Ptr(ADCMPublishPort)
 	}
+
+	//if utils.PtrIsEmpty(in.ADCM.Volume) {
+	//	in.ADCM.Volume = utils.Ptr(ADCMVolumeName + ":" + ADCMVolumeTarget)
+	//}
 
 	if in.Postgres == nil {
 		in.Postgres = &PostgresConfig{}
@@ -127,16 +144,12 @@ func SetDefaultsConfig(in *Config) {
 		in.Postgres.Connection.Database = utils.Ptr(PostgresDatabase)
 	}
 
-	if utils.PtrIsEmpty(in.Postgres.Volume) {
-		in.Postgres.Volume = utils.Ptr(PostgresVolumeName + ":" + PostgresVolumeTarget)
-	}
+	//if utils.PtrIsEmpty(in.Postgres.Volume) {
+	//	in.Postgres.Volume = utils.Ptr(PostgresVolumeName + ":" + PostgresVolumeTarget)
+	//}
 }
 
-func SetDefaultSecrets(in *Secrets) {
-	if in.Postgres == nil {
-		in.Postgres = &Credentials{}
-	}
-
+func SetDefaultSecrets(in *SensitiveData) {
 	if len(in.Postgres.Login) == 0 {
 		in.Postgres.Login = PostgresLogin
 	}

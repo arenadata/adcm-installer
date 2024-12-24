@@ -12,6 +12,8 @@ import (
 
 // Config sets the installer configuration
 type Config struct {
+	// Project set specific project name.
+	Project *string `json:"project,omitempty" yaml:"project,omitempty" doc:"Set project name."`
 	// Registry set specific global image registry.
 	Registry *string `json:"registry,omitempty" yaml:"registry,omitempty" doc:"Set specific image registry."`
 	// ADCM provides ADCM configuration options.
@@ -19,19 +21,14 @@ type Config struct {
 	// Postgres Provides PostgreSQL specific configuration options.
 	Postgres *PostgresConfig `json:"postgres,omitempty" yaml:"postgres,omitempty" doc:"Provides PostgreSQL specific configuration options."`
 	// Secrets provides sensitive data.
-	Secrets *Secrets `json:"secrets,omitempty" yaml:"secrets,omitempty" doc:"-"`
-}
-
-type AgeSensitiveData struct {
-	// Recipient AGE public key used to encrypt this data.
-	Recipient string `json:"recipient" yaml:"recipient" doc:"AGE public key used to encrypt this data."`
-	// EncryptedData encrypted data.
-	EncryptedData string `json:"enc" yaml:"enc" doc:"Encrypted data."`
+	Secrets *Secrets `json:"-" yaml:"secrets,omitempty" doc:"-"`
 }
 
 type ADCMConfig struct {
 	// Image provides ADCM image specific options.
 	Image *Image `json:"image,omitempty" yaml:"image,omitempty" doc:"Provides ADCM image specific options."`
+	// Publish ADCM port
+	Publish *uint16 `json:"publish,omitempty" yaml:"publish,omitempty" doc:"Publish ADCM port."`
 	// Volume persistent ADCM storage name or path.
 	Volume *string `json:"volume,omitempty" yaml:"volume,omitempty" doc:"Persistent ADCM storage name or path."`
 }
@@ -103,7 +100,7 @@ func (i Image) String() string {
 
 	image += imageName
 
-	tag := "latest"
+	tag := DefaultImageTag
 	if i.Tag != nil && len(*i.Tag) > 0 {
 		tag = *i.Tag
 	}
@@ -118,14 +115,23 @@ func (i Image) String() string {
 
 // Secrets sets secrets for applications
 type Secrets struct {
-	encDec   *crypt.AgeCrypt
-	Postgres *Credentials `json:"postgres" yaml:"postgres"`
+	Recipient     string         `json:"recipient" yaml:"recipient"`
+	SensitiveData *SensitiveData `json:"enc" yaml:"enc"`
 }
 
 func NewSecrets(e *crypt.AgeCrypt) *Secrets {
 	return &Secrets{
-		encDec: e,
+		Recipient: e.Recipient().String(),
+		SensitiveData: &SensitiveData{
+			encDec:   e,
+			Postgres: &Credentials{},
+		},
 	}
+}
+
+type SensitiveData struct {
+	encDec   *crypt.AgeCrypt
+	Postgres *Credentials `json:"postgres" yaml:"postgres"`
 }
 
 type Credentials struct {
@@ -133,36 +139,36 @@ type Credentials struct {
 	Password string `json:"password" yaml:"password"`
 }
 
-func (sec *Secrets) MarshalYAML() (any, error) {
-	type _Sec Secrets
-	b, err := yaml.Marshal(_Sec(*sec))
+func (sd *SensitiveData) MarshalYAML() (any, error) {
+	type _SD SensitiveData
+
+	b, err := yaml.Marshal(_SD(*sd))
 	if err != nil {
 		return nil, err
 	}
 
-	return sec.encDec.Encrypt(string(b))
+	return sd.encDec.Encrypt(string(b))
 }
 
-func (sec *Secrets) UnmarshalYAML(unmarshal func(any) error) error {
+func (sd *SensitiveData) UnmarshalYAML(unmarshal func(any) error) error {
 	var s string
 	if err := unmarshal(&s); err != nil {
 		return err
 	}
 
-	decData, err := sec.encDec.Decrypt(s)
+	decData, err := sd.encDec.Decrypt(s)
 	if err != nil {
 		return err
 	}
 
-	type _Sec Secrets
+	type _SD SensitiveData
 
-	var intermediateSec _Sec
-
-	if err = yaml.Unmarshal([]byte(decData), &intermediateSec); err != nil {
+	var iSD _SD
+	if err = yaml.Unmarshal([]byte(decData), &iSD); err != nil {
 		return err
 	}
 
-	*sec = Secrets(intermediateSec)
+	*sd = SensitiveData(iSD)
 
 	return nil
 }

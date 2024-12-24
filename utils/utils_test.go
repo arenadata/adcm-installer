@@ -5,44 +5,12 @@ import (
 )
 
 func TestGenerateRandomString(t *testing.T) {
-	type args struct {
-		length int
-	}
-	tests := []struct {
-		name string
-		args args
-		want string
-	}{
-		// TODO: Add test cases.
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := GenerateRandomString(tt.args.length); got != tt.want {
-				t.Errorf("GenerateRandomString() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestIn(t *testing.T) {
-	type args struct {
-		a []string
-		s string
-	}
-	tests := []struct {
-		name string
-		args args
-		want bool
-	}{
-		// TODO: Add test cases.
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := In(tt.args.a, tt.args.s); got != tt.want {
-				t.Errorf("In() = %v, want %v", got, tt.want)
-			}
-		})
-	}
+	const length = 42
+	t.Run("RandomStringLength", func(t *testing.T) {
+		if got := GenerateRandomString(length); len(got) != length {
+			t.Errorf("GenerateRandomString() length = %v, want %v", got, length)
+		}
+	})
 }
 
 func TestIsPath(t *testing.T) {
@@ -72,27 +40,6 @@ func TestIsPath(t *testing.T) {
 		})
 	}
 }
-
-//func TestPtr(t *testing.T) {
-//	type args[T comparable] struct {
-//		v T
-//	}
-//	type testCase[T comparable] struct {
-//		name string
-//		args args[T]
-//		want *T
-//	}
-//	tests := []testCase[ /* TODO: Insert concrete types here */ ]{
-//		// TODO: Add test cases.
-//	}
-//	for _, tt := range tests {
-//		t.Run(tt.name, func(t *testing.T) {
-//			if got := Ptr(tt.args.v); !reflect.DeepEqual(got, tt.want) {
-//				t.Errorf("Ptr() = %v, want %v", got, tt.want)
-//			}
-//		})
-//	}
-//}
 
 func TestPtrIsEmpty(t *testing.T) {
 	type args struct {

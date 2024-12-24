@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"os"
 )
@@ -11,13 +12,19 @@ var rootCmd = &cobra.Command{
 	Short: "A brief description of your application",
 }
 
+func init() {
+	var verbose bool
+	cobra.OnInitialize(func() {
+		if verbose {
+			log.SetLevel(log.DebugLevel)
+		}
+	})
+	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "enable verbose mode")
+}
+
 func Execute() {
 	err := rootCmd.Execute()
 	if err != nil {
 		os.Exit(1)
 	}
-}
-
-func init() {
-	rootCmd.PersistentFlags().StringP("config", "c", "adcm.yaml", "Path to environment configuration")
 }

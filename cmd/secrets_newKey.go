@@ -17,24 +17,26 @@ import (
 var newKeyCmd = &cobra.Command{
 	Use:   "new-key",
 	Short: "Generate new AGE key",
-	Run: func(cmd *cobra.Command, args []string) {
+	Run: func(cmd *cobra.Command, _ []string) {
+		logger := log.WithField("command", "new-key")
+
 		k, err := crypt.New()
 		if err != nil {
-			log.Fatalf("generate new age key failed: %v", err)
+			logger.Fatalf("generate new age key failed: %v", err)
 		}
 
 		stdout, stderr := cmd.OutOrStdout(), cmd.ErrOrStderr()
 		output, _ := cmd.Flags().GetString("output")
 		if len(output) > 0 && output != "-" {
 			if err = saveAgeKey(output, k); err != nil {
-				log.Fatalf("save age key failed: %v", err)
+				logger.Fatalf("save age key failed: %v", err)
 			}
 
 			return
 		}
 
 		if err := printAgeKey(stderr, stdout, k); err != nil {
-			log.Fatal(err)
+			logger.Fatal(err)
 		}
 	},
 }
@@ -45,9 +47,12 @@ func init() {
 }
 
 func saveAgeKey(path string, key *crypt.AgeCrypt) error {
-	fi, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0640)
+	if _, err := os.Stat(path); err == nil {
+		return fmt.Errorf("file %s already exists", path)
+	}
+	fi, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0400)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	defer func() {
 		if e := fi.Close(); e != nil {
