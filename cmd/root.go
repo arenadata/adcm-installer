@@ -1,14 +1,15 @@
 package cmd
 
 import (
+	"os"
+
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
-	"os"
 )
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
-	Use:   "github.com/arenadata/adcm-installer",
+	Use:   "adcm",
 	Short: "A brief description of your application",
 }
 
