@@ -2,8 +2,9 @@ package models
 
 import (
 	"fmt"
-	"github.com/arenadata/adcm-installer/utils"
 	"testing"
+
+	"github.com/arenadata/adcm-installer/utils"
 )
 
 func TestImage_String(t *testing.T) {

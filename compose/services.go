@@ -69,7 +69,13 @@ func addServiceADCM(prj *types.Project, conf *models.Config) error {
 	svc.SecurityOpt = []string{"no-new-privileges"}
 
 	if !utils.PtrIsEmpty(conf.ADCM.Volume) {
-		vol, err := format.ParseVolume(*conf.ADCM.Volume)
+		volMount := *conf.ADCM.Volume
+		volParts := strings.Split(volMount, ":")
+		if len(volParts) == 1 || (len(volParts) == 2 && len(volParts[1]) == 0) {
+			volMount = fmt.Sprintf("%s:%s:Z", volParts[0], models.ADCMVolumeTarget)
+		}
+
+		vol, err := format.ParseVolume(volMount)
 		if err != nil {
 			return err
 		}
@@ -122,7 +128,13 @@ func addServicePG(prj *types.Project, conf *models.Config) error {
 	}
 
 	if !utils.PtrIsEmpty(conf.Postgres.Volume) {
-		vol, err := format.ParseVolume(*conf.Postgres.Volume)
+		volMount := *conf.ADCM.Volume
+		volParts := strings.Split(volMount, ":")
+		if len(volParts) == 1 || (len(volParts) == 2 && len(volParts[1]) == 0) {
+			volMount = fmt.Sprintf("%s:%s:Z", volParts[0], models.PostgresVolumeTarget)
+		}
+
+		vol, err := format.ParseVolume(volMount)
 		if err != nil {
 			return err
 		}

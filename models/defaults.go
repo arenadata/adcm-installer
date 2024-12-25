@@ -1,7 +1,11 @@
 package models
 
 import (
+	"reflect"
+
 	"github.com/arenadata/adcm-installer/utils"
+
+	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -34,37 +38,33 @@ const (
 	PostgresVolumeTarget = "/var/lib/postgresql/data"
 )
 
-func FullConfigWithDefaults() *Config {
-	return &Config{
-		Project:  utils.Ptr(ProjectName),
+func FullConfigWithComments(sec *Secrets) *yaml.Node {
+	conf := &Config{
 		Registry: utils.Ptr(""),
 		ADCM: &ADCMConfig{
-			Image: &Image{
-				Registry: utils.Ptr(ADImageRegistry),
-				Name:     utils.Ptr(ADCMImageName),
-				Tag:      utils.Ptr(ADCMImageTag),
-			},
-			Publish: utils.Ptr(ADCMPublishPort),
-			Volume:  utils.Ptr(ADCMVolumeName + ":" + ADCMVolumeTarget + ":Z"),
+			Volume: utils.Ptr(ADCMVolumeName + ":" + ADCMVolumeTarget + ":Z"),
 		},
 		Postgres: &PostgresConfig{
-			Install: utils.Ptr(PostgresInstall),
 			Image: &Image{
 				Registry: utils.Ptr(""),
-				Name:     utils.Ptr(PostgresImageName),
-				Tag:      utils.Ptr(PostgresImageTag),
 			},
 			Connection: &PostgresConnectionConfig{
-				Host:     utils.Ptr(PostgresHost),
-				Port:     utils.Ptr(PostgresPort),
-				Database: utils.Ptr(PostgresDatabase),
 				SSL: &PostgresSSLConfig{
 					SSLMode: PostgresSSLMode,
 				},
 			},
 			Volume: utils.Ptr(PostgresVolumeName + ":" + PostgresVolumeTarget + ":Z"),
 		},
+		Secrets: sec,
 	}
+
+	SetDefaultsConfig(conf)
+	yamlNode, err := setConfigComments(conf)
+	if err != nil {
+		panic(err)
+	}
+
+	return yamlNode
 }
 
 func SetDefaultsConfig(in *Config) {
@@ -148,5 +148,42 @@ func SetDefaultSecrets(in *SensitiveData) {
 
 	if len(in.Postgres.Password) == 0 {
 		in.Postgres.Password = utils.GenerateRandomString(15)
+	}
+}
+
+func setConfigComments(conf *Config) (*yaml.Node, error) {
+	node := new(yaml.Node)
+	if err := node.Encode(conf); err != nil {
+		return nil, err
+	}
+
+	comments(reflect.ValueOf(conf), node)
+
+	return node, nil
+}
+
+func comments(in reflect.Value, out *yaml.Node) {
+	if in.Kind() == reflect.Ptr {
+		in = in.Elem()
+	}
+	t := in.Type()
+
+	for i := 0; i < in.NumField(); i++ {
+		field := t.Field(i)
+		docTag := field.Tag.Get("doc")
+		if docTag == "-" || len(docTag) == 0 {
+			continue
+		}
+		out.Content[i*2].HeadComment = docTag
+
+		if field.Type.Kind() == reflect.Ptr {
+			v := in.Field(i).Elem()
+			if !v.IsValid() {
+				continue
+			}
+			if v.Type().Kind() == reflect.Struct {
+				comments(v, out.Content[i*2+1])
+			}
+		}
 	}
 }

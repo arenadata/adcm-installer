@@ -23,23 +23,7 @@ func Ptr[T comparable](v T) *T {
 	return &v
 }
 
-func PtrIsEmpty(v any) bool {
-	switch t := v.(type) {
-	case *uint16:
-		return ptrIntIsEmpty(t)
-	case *int:
-		return ptrIntIsEmpty(t)
-	case *string:
-		if t == nil {
-			return true
-		}
-		return len(*t) == 0
-	}
-
-	return false
-}
-
-func ptrIntIsEmpty[T comparable](v *T) bool {
+func PtrIsEmpty[T comparable](v *T) bool {
 	if v == nil {
 		return true
 	}

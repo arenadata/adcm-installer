@@ -2,7 +2,6 @@ package models
 
 import (
 	"path"
-	"reflect"
 	"strings"
 
 	"github.com/arenadata/adcm-installer/crypt"
@@ -171,41 +170,4 @@ func (sd *SensitiveData) UnmarshalYAML(unmarshal func(any) error) error {
 	*sd = SensitiveData(iSD)
 
 	return nil
-}
-
-func SetConfigComments(conf *Config) (*yaml.Node, error) {
-	node := new(yaml.Node)
-	if err := node.Encode(conf); err != nil {
-		return nil, err
-	}
-
-	comments(reflect.ValueOf(conf), node)
-
-	return node, nil
-}
-
-func comments(in reflect.Value, out *yaml.Node) {
-	if in.Kind() == reflect.Ptr {
-		in = in.Elem()
-	}
-	t := in.Type()
-
-	for i := 0; i < in.NumField(); i++ {
-		field := t.Field(i)
-		docTag := field.Tag.Get("doc")
-		if docTag == "-" || len(docTag) == 0 {
-			continue
-		}
-		out.Content[i*2].HeadComment = docTag
-
-		if field.Type.Kind() == reflect.Ptr {
-			v := in.Field(i).Elem()
-			if !v.IsValid() {
-				continue
-			}
-			if v.Type().Kind() == reflect.Struct {
-				comments(v, out.Content[i*2+1])
-			}
-		}
-	}
 }

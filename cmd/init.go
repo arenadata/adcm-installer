@@ -70,24 +70,18 @@ func initProject(cmd *cobra.Command, _ []string) {
 	}
 
 	sec := models.NewSecrets(ageCrypt)
-	models.SetDefaultSecrets(sec.SensitiveData)
-
 	interactive, _ := cmd.Flags().GetBool("interactive")
 	if interactive {
 		logger.Debug("Interactive mode enabled")
 		if err = pgCredentials(sec); err != nil {
 			logger.Fatal(err)
 		}
+	} else {
+		models.SetDefaultSecrets(sec.SensitiveData)
 	}
 
-	conf := models.FullConfigWithDefaults()
-	conf.Secrets = sec
-
-	logger.Debug("Set comments to config")
-	configNode, err := models.SetConfigComments(conf)
-	if err != nil {
-		logger.Fatal(err)
-	}
+	logger.Debug("Generate config with comments")
+	configNode := models.FullConfigWithComments(sec)
 
 	fi, err := os.OpenFile(configFile, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0640)
 	if err != nil {
