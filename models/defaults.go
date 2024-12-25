@@ -45,7 +45,7 @@ func FullConfigWithDefaults() *Config {
 				Tag:      utils.Ptr(ADCMImageTag),
 			},
 			Publish: utils.Ptr(ADCMPublishPort),
-			Volume:  utils.Ptr(ADCMVolumeName + ":" + ADCMVolumeTarget),
+			Volume:  utils.Ptr(ADCMVolumeName + ":" + ADCMVolumeTarget + ":Z"),
 		},
 		Postgres: &PostgresConfig{
 			Install: utils.Ptr(PostgresInstall),
@@ -62,7 +62,7 @@ func FullConfigWithDefaults() *Config {
 					SSLMode: PostgresSSLMode,
 				},
 			},
-			Volume: utils.Ptr(PostgresVolumeName + ":" + PostgresVolumeTarget),
+			Volume: utils.Ptr(PostgresVolumeName + ":" + PostgresVolumeTarget + ":Z"),
 		},
 	}
 }
@@ -99,10 +99,6 @@ func SetDefaultsConfig(in *Config) {
 	if utils.PtrIsEmpty(in.ADCM.Publish) {
 		in.ADCM.Publish = utils.Ptr(ADCMPublishPort)
 	}
-
-	//if utils.PtrIsEmpty(in.ADCM.Volume) {
-	//	in.ADCM.Volume = utils.Ptr(ADCMVolumeName + ":" + ADCMVolumeTarget)
-	//}
 
 	if in.Postgres == nil {
 		in.Postgres = &PostgresConfig{}
@@ -143,10 +139,6 @@ func SetDefaultsConfig(in *Config) {
 	if utils.PtrIsEmpty(in.Postgres.Connection.Database) {
 		in.Postgres.Connection.Database = utils.Ptr(PostgresDatabase)
 	}
-
-	//if utils.PtrIsEmpty(in.Postgres.Volume) {
-	//	in.Postgres.Volume = utils.Ptr(PostgresVolumeName + ":" + PostgresVolumeTarget)
-	//}
 }
 
 func SetDefaultSecrets(in *SensitiveData) {

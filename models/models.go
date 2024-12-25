@@ -15,7 +15,7 @@ type Config struct {
 	// Project set specific project name.
 	Project *string `json:"project,omitempty" yaml:"project,omitempty" doc:"Set project name."`
 	// Registry set specific global image registry.
-	Registry *string `json:"registry,omitempty" yaml:"registry,omitempty" doc:"Set specific image registry."`
+	Registry *string `json:"registry,omitempty" yaml:"registry,omitempty" doc:"Set global image registry."`
 	// ADCM provides ADCM configuration options.
 	ADCM *ADCMConfig `json:"adcm,omitempty" yaml:"adcm,omitempty" doc:"Provides ADCM configuration options."`
 	// Postgres Provides PostgreSQL specific configuration options.
@@ -30,7 +30,7 @@ type ADCMConfig struct {
 	// Publish ADCM port
 	Publish *uint16 `json:"publish,omitempty" yaml:"publish,omitempty" doc:"Publish ADCM port."`
 	// Volume persistent ADCM storage name or path.
-	Volume *string `json:"volume,omitempty" yaml:"volume,omitempty" doc:"Persistent ADCM storage name or path."`
+	Volume *string `json:"volume,omitempty" yaml:"volume,omitempty" doc:"Persistent ADCM storage name or path. https://docs.docker.com/reference/compose-file/volumes/"`
 }
 
 type PostgresConfig struct {
@@ -41,7 +41,7 @@ type PostgresConfig struct {
 	// Connection provides PostgreSQL connection options. Ignored with postgres.install=true.
 	Connection *PostgresConnectionConfig `json:"connection,omitempty" yaml:"connection" doc:"Provides PostgreSQL connection options. Ignored with postgres.install=true."`
 	// Volume persistent PostgreSQL storage name or path.
-	Volume *string `json:"volume,omitempty" yaml:"volume,omitempty" doc:"Persistent PostgreSQL storage name or path."`
+	Volume *string `json:"volume,omitempty" yaml:"volume,omitempty" doc:"Persistent PostgreSQL storage name or path. https://docs.docker.com/reference/compose-file/volumes/"`
 }
 
 type PostgresConnectionConfig struct {

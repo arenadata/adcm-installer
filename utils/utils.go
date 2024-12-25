@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
-	"strings"
 	"time"
 )
 
@@ -47,10 +46,6 @@ func ptrIntIsEmpty[T comparable](v *T) bool {
 
 	var t T
 	return *v == t
-}
-
-func IsPath(s string) bool {
-	return len(s) == 0 || s == "." || strings.Contains(s, string(os.PathSeparator))
 }
 
 func FileExists(path string) (bool, error) {

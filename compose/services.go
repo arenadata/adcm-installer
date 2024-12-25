@@ -3,8 +3,6 @@ package compose
 import (
 	"encoding/json"
 	"fmt"
-	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -12,6 +10,7 @@ import (
 	"github.com/arenadata/adcm-installer/models"
 	"github.com/arenadata/adcm-installer/utils"
 
+	"github.com/compose-spec/compose-go/v2/format"
 	"github.com/compose-spec/compose-go/v2/types"
 	"github.com/docker/compose/v2/pkg/api"
 )
@@ -70,15 +69,15 @@ func addServiceADCM(prj *types.Project, conf *models.Config) error {
 	svc.SecurityOpt = []string{"no-new-privileges"}
 
 	if !utils.PtrIsEmpty(conf.ADCM.Volume) {
-		volConfig, err := Volume(*conf.ADCM.Volume, models.ADCMVolumeName, models.ADCMVolumeTarget)
+		vol, err := format.ParseVolume(*conf.ADCM.Volume)
 		if err != nil {
 			return err
 		}
-		if volConfig.Type == types.VolumeTypeVolume {
+		if vol.Type == types.VolumeTypeVolume {
 			prj.Volumes[models.ADCMVolumeName] = types.VolumeConfig{Name: models.ADCMVolumeName}
 		}
 
-		svc.Volumes = append(svc.Volumes, volConfig)
+		svc.Volumes = append(svc.Volumes, vol)
 	}
 
 	if *conf.Postgres.Install {
@@ -123,14 +122,14 @@ func addServicePG(prj *types.Project, conf *models.Config) error {
 	}
 
 	if !utils.PtrIsEmpty(conf.Postgres.Volume) {
-		volConfig, err := Volume(*conf.Postgres.Volume, models.PostgresVolumeName, models.PostgresVolumeTarget)
+		vol, err := format.ParseVolume(*conf.Postgres.Volume)
 		if err != nil {
 			return err
 		}
-		if volConfig.Type == types.VolumeTypeVolume {
+		if vol.Type == types.VolumeTypeVolume {
 			prj.Volumes[models.PostgresVolumeName] = types.VolumeConfig{Name: models.PostgresVolumeName}
 		}
-		svc.Volumes = append(svc.Volumes, volConfig)
+		svc.Volumes = append(svc.Volumes, vol)
 	}
 
 	svc.User = "postgres:postgres"
@@ -162,74 +161,4 @@ func EnvironmentFromMap(env map[string]string) types.MappingWithEquals {
 	}
 
 	return types.NewMappingWithEquals(values)
-}
-
-func Volume(volume, defSrc, defTarget string) (types.ServiceVolumeConfig, error) {
-	var volParts []string
-	if len(volume) > 0 {
-		volParts = strings.Split(volume, ":")
-	}
-
-	if runtime.GOOS == "windows" {
-		if len(volParts) == 3 {
-			// C:\data:/target
-			// C:\data:
-			volParts = []string{
-				volParts[0] + ":" + volParts[1],
-				volParts[2],
-			}
-		} else if len(volParts) == 2 && len(volParts[0]) == 1 {
-			// C:\data
-			volParts = []string{volume}
-		}
-	}
-
-	source := defSrc
-	target := defTarget
-	switch len(volParts) {
-	case 0:
-		if len(defSrc) == 0 || len(defTarget) == 0 {
-			return types.ServiceVolumeConfig{}, fmt.Errorf("no volume defaults provided: source %q, target %q", defSrc, defTarget)
-		}
-	case 1:
-		source = volParts[0]
-		if len(defTarget) == 0 {
-			return types.ServiceVolumeConfig{}, fmt.Errorf("default target is empty")
-		}
-	case 2:
-		// :/target
-		if len(volParts[0]) > 0 {
-			source = volParts[0]
-		}
-
-		// source:
-		if len(volParts[1]) > 0 {
-			target = volParts[1]
-		}
-
-		if len(target) == 0 {
-			return types.ServiceVolumeConfig{}, fmt.Errorf("default target is empty")
-		}
-	default:
-		return types.ServiceVolumeConfig{}, fmt.Errorf("invalid volume format: %s", volume)
-	}
-
-	volConfig := types.ServiceVolumeConfig{
-		Target: target,
-	}
-	if utils.IsPath(source) {
-		volConfig.Type = types.VolumeTypeBind
-		absPath, err := filepath.Abs(source)
-		if err != nil {
-			return types.ServiceVolumeConfig{}, err
-		}
-		volConfig.Source = absPath
-		volConfig.Bind = &types.ServiceVolumeBind{CreateHostPath: true}
-	} else {
-		volConfig.Type = types.VolumeTypeVolume
-		volConfig.Volume = &types.ServiceVolumeVolume{}
-		volConfig.Source = source
-	}
-
-	return volConfig, nil
 }
