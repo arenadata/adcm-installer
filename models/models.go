@@ -57,13 +57,13 @@ type PostgresConnectionConfig struct {
 
 type PostgresSSLConfig struct {
 	// SSLMode PostgreSQL SSL mode.
-	SSLMode string `json:"ssl-mode" yaml:"sslMode" doc:"PostgreSQL SSL mode."`
+	SSLMode string `json:"sslmode" yaml:"sslMode" doc:"PostgreSQL SSL mode."`
 	// SSLCert PostgreSQL SSL cert.
-	SSLCert string `json:"ssl-cert" yaml:"sslCert" doc:"PostgreSQL SSL cert."`
+	SSLCert string `json:"sslcert" yaml:"sslCert" doc:"PostgreSQL SSL cert."`
 	// SSLKey PostgreSQL SSL key.
-	SSLKey string `json:"ssl-key" yaml:"sslKey" doc:"PostgreSQL SSL key."`
+	SSLKey string `json:"sslkey" yaml:"sslKey" doc:"PostgreSQL SSL key."`
 	// SSLRootCert PostgreSQL SSL root cert.
-	SSLRootCert string `json:"ssl-root-cert" yaml:"sslRootCert" doc:"PostgreSQL SSL root cert."`
+	SSLRootCert string `json:"sslrootcert" yaml:"sslRootCert" doc:"PostgreSQL SSL root cert."`
 }
 
 type Image struct {

@@ -30,7 +30,23 @@ func addServiceADCM(prj *types.Project, conf *models.Config) error {
 	}
 
 	if conf.Postgres.Connection.SSL != nil && conf.Postgres.Connection.SSL.SSLMode != models.PostgresSSLMode {
-		b, err := json.Marshal(conf.Postgres.Connection.SSL)
+		containerSecrets := *conf.Postgres.Connection.SSL
+
+		type mnt struct {
+			s *string //source
+			t string  //target
+		}
+		for k, v := range map[string]mnt{
+			"ca":   {&containerSecrets.SSLRootCert, "/run/secrets/ca.crt"},
+			"cert": {&containerSecrets.SSLCert, "/run/secrets/tls.crt"},
+			"key":  {&containerSecrets.SSLKey, "/run/secrets/tls.key"},
+		} {
+			prj.Secrets[k] = types.SecretConfig{Name: k, File: *v.s}
+			svc.Secrets = append(svc.Secrets, types.ServiceSecretConfig{Source: k, Target: v.t})
+			*v.s = v.t
+		}
+
+		b, err := json.Marshal(containerSecrets)
 		if err != nil {
 			return err
 		}
