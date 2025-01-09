@@ -16,6 +16,7 @@ const (
 
 	DefaultImageTag = "latest"
 
+	ADLabel                 = "io.arenadata"
 	ADImageRegistry         = "hub.arenadata.io"
 	ADCMServiceName         = "adcm"
 	ADCMImageName           = "adcm/adcm"
@@ -76,29 +77,7 @@ func SetDefaultsConfig(in *Config) {
 		in.ADCM = &ADCMConfig{}
 	}
 
-	if in.ADCM.Image == nil {
-		in.ADCM.Image = &Image{}
-	}
-
-	if utils.PtrIsEmpty(in.ADCM.Image.Registry) {
-		if utils.PtrIsEmpty(in.Registry) {
-			in.ADCM.Image.Registry = utils.Ptr(ADImageRegistry)
-		} else {
-			in.ADCM.Image.Registry = in.Registry
-		}
-	}
-
-	if utils.PtrIsEmpty(in.ADCM.Image.Name) {
-		in.ADCM.Image.Name = utils.Ptr(ADCMImageName)
-	}
-
-	if utils.PtrIsEmpty(in.ADCM.Image.Tag) {
-		in.ADCM.Image.Tag = utils.Ptr(ADCMImageTag)
-	}
-
-	if utils.PtrIsEmpty(in.ADCM.Publish) {
-		in.ADCM.Publish = utils.Ptr(ADCMPublishPort)
-	}
+	SetDefaultsADCMConfig(in.ADCM, in.Registry)
 
 	if in.Postgres == nil {
 		in.Postgres = &PostgresConfig{}
@@ -139,6 +118,33 @@ func SetDefaultsConfig(in *Config) {
 	if utils.PtrIsEmpty(in.Postgres.Connection.Database) {
 		in.Postgres.Connection.Database = utils.Ptr(PostgresDatabase)
 	}
+}
+
+func SetDefaultsADCMConfig(in *ADCMConfig, registry *string) {
+	if in.Image == nil {
+		in.Image = &Image{}
+	}
+
+	if utils.PtrIsEmpty(in.Image.Registry) {
+		if utils.PtrIsEmpty(registry) {
+			in.Image.Registry = utils.Ptr(ADImageRegistry)
+		} else {
+			in.Image.Registry = registry
+		}
+	}
+
+	if utils.PtrIsEmpty(in.Image.Name) {
+		in.Image.Name = utils.Ptr(ADCMImageName)
+	}
+
+	if utils.PtrIsEmpty(in.Image.Tag) {
+		in.Image.Tag = utils.Ptr(ADCMImageTag)
+	}
+
+	if utils.PtrIsEmpty(in.Publish) {
+		in.Publish = utils.Ptr(ADCMPublishPort)
+	}
+
 }
 
 func SetDefaultSecrets(in *SensitiveData) {

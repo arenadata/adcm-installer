@@ -16,7 +16,7 @@ import (
 )
 
 func addServiceADCM(prj *types.Project, conf *models.Config) error {
-	svc := NewService(prj.Name, models.ADCMServiceName, conf.ADCM.Image.String())
+	svc := NewService(prj, models.ADCMServiceName, conf.ADCM.Image.String())
 	svc.CapAdd = []string{"CAP_CHOWN", "CAP_SETUID", "CAP_SETGID"} // nginx
 	svc.CapDrop = []string{"ALL"}
 
@@ -102,7 +102,7 @@ func addServiceADCM(prj *types.Project, conf *models.Config) error {
 }
 
 func addServicePG(prj *types.Project, conf *models.Config) error {
-	svc := NewService(prj.Name, models.PostgresServiceName, conf.Postgres.Image.String())
+	svc := NewService(prj, models.PostgresServiceName, conf.Postgres.Image.String())
 	svc.CapDrop = []string{"ALL"}
 
 	svc.Environment = EnvironmentFromMap(map[string]string{
@@ -151,17 +151,19 @@ func addServicePG(prj *types.Project, conf *models.Config) error {
 	return nil
 }
 
-func NewService(projectName, name, image string) types.ServiceConfig {
+func NewService(prj *types.Project, name, image string) types.ServiceConfig {
 	return types.ServiceConfig{
 		Name:          name,
-		ContainerName: fmt.Sprintf("%s_%s", projectName, name),
+		ContainerName: fmt.Sprintf("%s_%s", prj.Name, name),
 		Image:         image,
 		Platform:      "linux/amd64",
 		Restart:       types.RestartPolicyOnFailure,
 		Labels: map[string]string{
-			api.ProjectLabel: projectName,
-			api.ServiceLabel: name,
-			api.OneoffLabel:  "False",
+			api.ConfigFilesLabel: prj.ComposeFiles[0],
+			api.OneoffLabel:      "False",
+			api.ProjectLabel:     prj.Name,
+			api.ServiceLabel:     name,
+			models.ADLabel:       "adcm",
 		},
 	}
 }

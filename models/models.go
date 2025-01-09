@@ -11,6 +11,7 @@ import (
 
 // Config sets the installer configuration
 type Config struct {
+	Path string `json:"-" yaml:"-"`
 	// Project set specific project name.
 	Project *string `json:"project,omitempty" yaml:"project,omitempty" doc:"Set project name."`
 	// Registry set specific global image registry.

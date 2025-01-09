@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"os"
+	"path/filepath"
 
 	"github.com/arenadata/adcm-installer/compose"
 	"github.com/arenadata/adcm-installer/crypt"
@@ -52,6 +53,11 @@ var upCmd = &cobra.Command{
 			if err = readYamlFile(configFile, config); err != nil {
 				logger.Fatal(err)
 			}
+			fp, err := filepath.Abs(configFile)
+			if err != nil {
+				logger.Warningf("get absolute path to config failed: %v", err)
+			}
+			config.Path = fp
 		}
 
 		models.SetDefaultSecrets(config.Secrets.SensitiveData)
