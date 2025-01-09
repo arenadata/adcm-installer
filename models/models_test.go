@@ -26,7 +26,7 @@ func TestImage_String(t *testing.T) {
 		{
 			"WithoutRegistryWithoutTag",
 			fields{nil, defaultImage, nil},
-			fmt.Sprintf("%s:%s", ADCMImageName, DefaultImageTag),
+			fmt.Sprintf("%s:%s", ADCMImageName, ADCMImageTag),
 		},
 		{
 			"WithoutRegistry",

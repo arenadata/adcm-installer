@@ -83,20 +83,20 @@ func (c Compose) List(ctx context.Context, all bool) ([]api.Stack, error) {
 
 func NewProject(conf *models.Config) *types.Project {
 	return &types.Project{
-		Name:         *conf.Project,
-		Services:     make(types.Services),
-		Volumes:      make(types.Volumes),
-		ComposeFiles: []string{conf.Path},
+		Name:     *conf.DeploymentID,
+		Services: make(types.Services),
+		Volumes:  make(types.Volumes),
 	}
 }
 
-func NewADCMProject(conf *models.Config) (*types.Project, error) {
+func NewADCMProject(conf *models.Config, configFilePath string) (*types.Project, error) {
 	project := NewProject(conf)
-	networkName := *conf.Project
-	if networkName == models.ProjectName {
-		networkName = models.ProjectName + "_adcm"
+	networkName := *conf.DeploymentID
+	if networkName == models.DeploymentId {
+		networkName = models.DeploymentId + "_adcm"
 	}
 	project.Networks = map[string]types.NetworkConfig{networkName: {Name: networkName}}
+	project.ComposeFiles = []string{configFilePath}
 
 	if *conf.Postgres.Install {
 		if err := addServicePG(project, conf); err != nil {

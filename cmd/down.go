@@ -22,32 +22,32 @@ var downCmd = &cobra.Command{
 			logger.Fatal(err)
 		}
 
-		var projectName string
+		var deployId string
 		if isConfigFileExists {
 			config := make(map[string]any)
 			logger.Debugf("Using config file %q", configFile)
 			if err = readYamlFile(configFile, config); err != nil {
 				logger.Fatal(err)
 			}
-			projectName = config["project"].(string)
+			deployId = config["deployment-id"].(string)
 		}
 
-		if cmd.Flags().Changed("project") || len(projectName) == 0 {
-			projectName, _ = cmd.Flags().GetString("project")
+		if cmd.Flags().Changed("deployment-id") || len(deployId) == 0 {
+			deployId, _ = cmd.Flags().GetString("deployment-id")
 		}
 
 		volumes, _ := cmd.Flags().GetBool("volumes")
 		if volumes {
 			logger.Warn("Volumes will be deleted")
 		}
-		logger.Debugf("Project %q will be down ...", projectName)
+		logger.Debugf("DeploymentID %q will be down ...", deployId)
 
 		comp, err := compose.NewComposeService()
 		if err != nil {
 			logger.Fatal(err)
 		}
 
-		if err = comp.Down(cmd.Context(), projectName, volumes); err != nil {
+		if err = comp.Down(cmd.Context(), deployId, volumes); err != nil {
 			logger.Fatal(err)
 		}
 	},
@@ -57,7 +57,7 @@ func init() {
 	rootCmd.AddCommand(downCmd)
 
 	downCmd.Flags().StringP("config", "c", models.ADCMConfigFile, "Path to configuration file")
-	downCmd.Flags().StringP("project", "p", models.ProjectName, "Project name")
-	downCmd.MarkFlagsMutuallyExclusive("config", "project")
+	downCmd.Flags().StringP("deployment-id", "d", models.DeploymentId, "DeploymentID name")
+	downCmd.MarkFlagsMutuallyExclusive("config", "deployment-id")
 	downCmd.Flags().Bool("volumes", false, "Remove with volumes")
 }

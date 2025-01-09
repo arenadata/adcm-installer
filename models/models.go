@@ -11,9 +11,8 @@ import (
 
 // Config sets the installer configuration
 type Config struct {
-	Path string `json:"-" yaml:"-"`
-	// Project set specific project name.
-	Project *string `json:"project,omitempty" yaml:"project,omitempty" doc:"Set project name."`
+	// DeploymentID set specific deployment name.
+	DeploymentID *string `json:"deployment-id,omitempty" yaml:"deployment-id,omitempty" doc:"Set deployment name (ID)."`
 	// Registry set specific global image registry.
 	Registry *string `json:"registry,omitempty" yaml:"registry,omitempty" doc:"Set global image registry."`
 	// ADCM provides ADCM configuration options.
@@ -100,7 +99,7 @@ func (i Image) String() string {
 
 	image += imageName
 
-	tag := DefaultImageTag
+	tag := ADCMImageTag
 	if i.Tag != nil && len(*i.Tag) > 0 {
 		tag = *i.Tag
 	}

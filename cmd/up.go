@@ -48,23 +48,23 @@ var upCmd = &cobra.Command{
 			Secrets: models.NewSecrets(ageCrypt),
 		}
 
+		var configFilePath string
 		if isConfigFileExists {
 			logger.Debugf("Using config file %q", configFile)
 			if err = readYamlFile(configFile, config); err != nil {
 				logger.Fatal(err)
 			}
-			fp, err := filepath.Abs(configFile)
+			configFilePath, err = filepath.Abs(configFile)
 			if err != nil {
 				logger.Warningf("get absolute path to config failed: %v", err)
 			}
-			config.Path = fp
 		}
 
 		models.SetDefaultSecrets(config.Secrets.SensitiveData)
 		models.SetDefaultsConfig(config)
 
 		logger.Debug("Initialize ADCM project from config")
-		prj, err := compose.NewADCMProject(config)
+		prj, err := compose.NewADCMProject(config, configFilePath)
 		if err != nil {
 			logger.Fatal(err)
 		}

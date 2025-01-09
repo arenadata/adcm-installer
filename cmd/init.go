@@ -29,6 +29,7 @@ func init() {
 	initCmd.Flags().StringP("config", "c", models.ADCMConfigFile, "Path to save configuration file")
 	initCmd.Flags().BoolP("force", "f", false, "Force overwrite existing config")
 	initCmd.Flags().BoolP("interactive", "i", false, "Interactive mode (set sensitive data)")
+	initCmd.Flags().StringP("deployment-id", "d", "", "Set specific deployment name (ID)")
 	initCmd.Flags().String("age-key", "", "Set specific private age key. Can be set by AGE_KEY environment variable")
 	initCmd.Flags().String("age-key-file", models.AGEKeyFile, "Read private age key from file")
 	initCmd.MarkFlagsMutuallyExclusive("age-key", "age-key-file")
@@ -69,11 +70,22 @@ func initProject(cmd *cobra.Command, _ []string) {
 		}
 	}
 
+	deployId, _ := cmd.Flags().GetString("deployment-id")
+
 	sec := models.NewSecrets(ageCrypt)
 	interactive, _ := cmd.Flags().GetBool("interactive")
 	if interactive {
 		logger.Debug("Interactive mode enabled")
-		if err = pgCredentials(sec); err != nil {
+		reader := bufio.NewReader(os.Stdin)
+
+		if len(deployId) == 0 {
+			deployId, err = deploymentId(reader)
+			if err != nil {
+				logger.Fatal(err)
+			}
+		}
+
+		if err = pgCredentials(reader, sec); err != nil {
 			logger.Fatal(err)
 		}
 	} else {
@@ -81,7 +93,7 @@ func initProject(cmd *cobra.Command, _ []string) {
 	}
 
 	logger.Debug("Generate config with comments")
-	configNode := models.FullConfigWithComments(sec)
+	configNode := models.FullConfigWithComments(deployId, sec)
 
 	fi, err := os.OpenFile(configFile, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0640)
 	if err != nil {
@@ -101,11 +113,24 @@ func initProject(cmd *cobra.Command, _ []string) {
 	}
 }
 
-func pgCredentials(sec *models.Secrets) error {
-	reader := bufio.NewReader(os.Stdin)
+func deploymentId(r *bufio.Reader) (string, error) {
+	fmt.Printf("Enter Deployment ID (default: %s): ", models.DeploymentId)
+	deployId, err := r.ReadString('\n')
+	if err != nil {
+		return "", err
+	}
 
+	deployId = strings.TrimSpace(deployId)
+	if len(deployId) == 0 {
+		deployId = models.DeploymentId
+	}
+
+	return deployId, nil
+}
+
+func pgCredentials(r *bufio.Reader, sec *models.Secrets) error {
 	fmt.Printf("Enter PostgreSQL Login (default: %s): ", models.PostgresLogin)
-	login, err := reader.ReadString('\n')
+	login, err := r.ReadString('\n')
 	if err != nil {
 		return err
 	}

@@ -9,18 +9,16 @@ import (
 )
 
 const (
-	ProjectName = "default"
+	DeploymentId = "default"
 
 	ADCMConfigFile = "adcm.yaml"
 	AGEKeyFile     = "age.key"
-
-	DefaultImageTag = "latest"
 
 	ADLabel                 = "io.arenadata"
 	ADImageRegistry         = "hub.arenadata.io"
 	ADCMServiceName         = "adcm"
 	ADCMImageName           = "adcm/adcm"
-	ADCMImageTag            = "2.4"
+	ADCMImageTag            = "2.5.0"
 	ADCMVolumeName          = "adcm"
 	ADCMVolumeTarget        = "/adcm/data"
 	ADCMPublishPort  uint16 = 8000
@@ -39,11 +37,15 @@ const (
 	PostgresVolumeTarget = "/var/lib/postgresql/data"
 )
 
-func FullConfigWithComments(sec *Secrets) *yaml.Node {
+func FullConfigWithComments(deploymentId string, sec *Secrets) *yaml.Node {
+	adcmVolumeName := deploymentId + "_" + ADCMVolumeName
+	postgresVolumeName := deploymentId + "_" + PostgresVolumeName
+
 	conf := &Config{
-		Registry: utils.Ptr(""),
+		DeploymentID: &deploymentId,
+		Registry:     utils.Ptr(""),
 		ADCM: &ADCMConfig{
-			Volume: utils.Ptr(ADCMVolumeName + ":" + ADCMVolumeTarget + ":Z"),
+			Volume: utils.Ptr(adcmVolumeName + ":" + ADCMVolumeTarget + ":Z"),
 		},
 		Postgres: &PostgresConfig{
 			Image: &Image{
@@ -54,7 +56,7 @@ func FullConfigWithComments(sec *Secrets) *yaml.Node {
 					SSLMode: PostgresSSLMode,
 				},
 			},
-			Volume: utils.Ptr(PostgresVolumeName + ":" + PostgresVolumeTarget + ":Z"),
+			Volume: utils.Ptr(postgresVolumeName + ":" + PostgresVolumeTarget + ":Z"),
 		},
 		Secrets: sec,
 	}
@@ -69,8 +71,8 @@ func FullConfigWithComments(sec *Secrets) *yaml.Node {
 }
 
 func SetDefaultsConfig(in *Config) {
-	if in.Project == nil {
-		in.Project = utils.Ptr(ProjectName)
+	if in.DeploymentID == nil {
+		in.DeploymentID = utils.Ptr(DeploymentId)
 	}
 
 	if in.ADCM == nil {
