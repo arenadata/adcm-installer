@@ -9,14 +9,16 @@ import (
 )
 
 const (
+	DefaultPlatform = "linux/amd64"
+
 	DeploymentId = "default"
 
 	ADCMConfigFile = "adcm.yaml"
 	AGEKeyFile     = "age.key"
 
+	ADCMServiceName         = "adcm"
 	ADLabel                 = "io.arenadata"
 	ADImageRegistry         = "hub.arenadata.io"
-	ADCMServiceName         = "adcm"
 	ADCMImageName           = "adcm/adcm"
 	ADCMImageTag            = "2.5.0"
 	ADCMVolumeName          = "adcm"
@@ -38,6 +40,9 @@ const (
 )
 
 func FullConfigWithComments(deploymentId string, sec *Secrets) *yaml.Node {
+	if len(deploymentId) == 0 {
+		deploymentId = DeploymentId
+	}
 	adcmVolumeName := deploymentId + "_" + ADCMVolumeName
 	postgresVolumeName := deploymentId + "_" + PostgresVolumeName
 
@@ -45,7 +50,7 @@ func FullConfigWithComments(deploymentId string, sec *Secrets) *yaml.Node {
 		DeploymentID: &deploymentId,
 		Registry:     utils.Ptr(""),
 		ADCM: &ADCMConfig{
-			Volume: utils.Ptr(adcmVolumeName + ":" + ADCMVolumeTarget + ":Z"),
+			Volume: utils.Ptr(adcmVolumeName + ":" + ADCMVolumeTarget),
 		},
 		Postgres: &PostgresConfig{
 			Image: &Image{
@@ -56,7 +61,7 @@ func FullConfigWithComments(deploymentId string, sec *Secrets) *yaml.Node {
 					SSLMode: PostgresSSLMode,
 				},
 			},
-			Volume: utils.Ptr(postgresVolumeName + ":" + PostgresVolumeTarget + ":Z"),
+			Volume: utils.Ptr(postgresVolumeName + ":" + PostgresVolumeTarget),
 		},
 		Secrets: sec,
 	}

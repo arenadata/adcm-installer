@@ -80,7 +80,8 @@ func addServiceADCM(prj *types.Project, conf *models.Config) error {
 			return err
 		}
 		if vol.Type == types.VolumeTypeVolume {
-			prj.Volumes[models.ADCMVolumeName] = types.VolumeConfig{Name: models.ADCMVolumeName}
+			vol.Bind = nil
+			prj.Volumes[vol.Source] = types.VolumeConfig{Name: vol.Source}
 		}
 
 		svc.Volumes = append(svc.Volumes, vol)
@@ -128,10 +129,12 @@ func addServicePG(prj *types.Project, conf *models.Config) error {
 	}
 
 	if !utils.PtrIsEmpty(conf.Postgres.Volume) {
-		volMount := *conf.ADCM.Volume
+		volMount := *conf.Postgres.Volume
 		volParts := strings.Split(volMount, ":")
 		if len(volParts) == 1 || (len(volParts) == 2 && len(volParts[1]) == 0) {
-			volMount = fmt.Sprintf("%s:%s:Z", volParts[0], models.PostgresVolumeTarget)
+			// volume: source
+			// volume: "source:"
+			volMount = fmt.Sprintf("%s:%s", volParts[0], models.PostgresVolumeTarget)
 		}
 
 		vol, err := format.ParseVolume(volMount)
@@ -139,7 +142,8 @@ func addServicePG(prj *types.Project, conf *models.Config) error {
 			return err
 		}
 		if vol.Type == types.VolumeTypeVolume {
-			prj.Volumes[models.PostgresVolumeName] = types.VolumeConfig{Name: models.PostgresVolumeName}
+			vol.Bind = nil
+			prj.Volumes[vol.Source] = types.VolumeConfig{Name: vol.Source}
 		}
 		svc.Volumes = append(svc.Volumes, vol)
 	}
@@ -154,9 +158,9 @@ func addServicePG(prj *types.Project, conf *models.Config) error {
 func NewService(prj *types.Project, name, image string) types.ServiceConfig {
 	return types.ServiceConfig{
 		Name:          name,
-		ContainerName: fmt.Sprintf("%s_%s", prj.Name, name),
+		ContainerName: ContainerName(prj.Name, name),
 		Image:         image,
-		Platform:      "linux/amd64",
+		Platform:      models.DefaultPlatform,
 		Restart:       types.RestartPolicyOnFailure,
 		Labels: map[string]string{
 			api.ConfigFilesLabel: prj.ComposeFiles[0],
@@ -175,4 +179,8 @@ func EnvironmentFromMap(env map[string]string) types.MappingWithEquals {
 	}
 
 	return types.NewMappingWithEquals(values)
+}
+
+func ContainerName(projectName, name string) string {
+	return fmt.Sprintf("%s_%s", projectName, name)
 }

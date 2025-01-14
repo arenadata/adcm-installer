@@ -31,7 +31,7 @@ var upCmd = &cobra.Command{
 			logger.Fatal(err)
 		}
 
-		logger.Debug("Get AGE key")
+		logger.Debug("GetProject AGE key")
 		ageCrypt, err := getAgeKey(cmd, logger)
 		if err != nil {
 			logger.Fatal(err)
@@ -87,6 +87,11 @@ func init() {
 	upCmd.Flags().String("age-key-file", models.AGEKeyFile, "Private AGE key file")
 	upCmd.Flags().Bool("init", false, "Initialize new project")
 	upCmd.MarkFlagsMutuallyExclusive("age-key", "age-key-file")
+
+	// TODO: implement
+	upCmd.Flags().String("with-backup", "", "Run ADCM from backup data")
+	upCmd.MarkFlagsMutuallyExclusive("init", "with-backup")
+	upCmd.MarkFlagsMutuallyExclusive("config", "with-backup")
 }
 
 func readYamlFile(file string, out any) error {

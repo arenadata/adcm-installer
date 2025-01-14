@@ -1,6 +1,11 @@
 package cmd
 
 import (
+	"bufio"
+	"fmt"
+	"os"
+	"strings"
+
 	"github.com/arenadata/adcm-installer/compose"
 	"github.com/arenadata/adcm-installer/models"
 	"github.com/arenadata/adcm-installer/utils"
@@ -36,11 +41,23 @@ var downCmd = &cobra.Command{
 			deployId, _ = cmd.Flags().GetString("deployment-id")
 		}
 
+		logger.Debugf("DeploymentID %q will be down ...", deployId)
+
 		volumes, _ := cmd.Flags().GetBool("volumes")
+		yes, _ := cmd.Flags().GetBool("yes")
 		if volumes {
 			logger.Warn("Volumes will be deleted")
+			if !yes {
+				fmt.Print("Are you sure you want to delete all volumes: [y/N] ")
+				prompt, err := bufio.NewReader(os.Stdin).ReadString('\n')
+				if err != nil {
+					logger.Fatal(err)
+				}
+				if strings.TrimSpace(prompt) != "y" {
+					return
+				}
+			}
 		}
-		logger.Debugf("DeploymentID %q will be down ...", deployId)
 
 		comp, err := compose.NewComposeService()
 		if err != nil {
@@ -59,5 +76,6 @@ func init() {
 	downCmd.Flags().StringP("config", "c", models.ADCMConfigFile, "Path to configuration file")
 	downCmd.Flags().StringP("deployment-id", "d", models.DeploymentId, "DeploymentID name")
 	downCmd.MarkFlagsMutuallyExclusive("config", "deployment-id")
-	downCmd.Flags().Bool("volumes", false, "Remove with volumes")
+	downCmd.Flags().Bool("volumes", false, "Remove all volumes")
+	downCmd.Flags().Bool("yes", false, "Remove all volumes without asking for confirmation")
 }
