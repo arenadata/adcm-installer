@@ -80,11 +80,11 @@ func startBackup(ctx context.Context, comp *compose.Compose, deployId, outputDir
 		envs = append(envs, fmt.Sprintf("PGPASSWORD=%s", *v))
 	}
 
-	if err = comp.Pause(ctx, deployId, models.ADCMServiceName); err != nil {
+	if err = comp.Stop(ctx, deployId, models.ADCMServiceName); err != nil {
 		return err
 	}
 	defer func() {
-		if e := comp.UnPause(ctx, deployId, models.ADCMServiceName); e != nil {
+		if e := comp.Start(ctx, deployId, models.ADCMServiceName); e != nil {
 			err = e
 		}
 	}()
