@@ -162,11 +162,13 @@ func NewService(prj *types.Project, name, image string) types.ServiceConfig {
 		Image:         image,
 		Platform:      models.DefaultPlatform,
 		Restart:       types.RestartPolicyOnFailure,
-		Labels: map[string]string{
-			api.ConfigFilesLabel: prj.ComposeFiles[0],
-			api.OneoffLabel:      "False",
+		CustomLabels: map[string]string{
 			api.ProjectLabel:     prj.Name,
 			api.ServiceLabel:     name,
+			api.VersionLabel:     api.ComposeVersion,
+			api.WorkingDirLabel:  prj.WorkingDir,
+			api.ConfigFilesLabel: strings.Join(prj.ComposeFiles, ","),
+			api.OneoffLabel:      "False",
 			models.ADLabel:       "adcm",
 		},
 	}
