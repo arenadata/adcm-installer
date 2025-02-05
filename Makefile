@@ -1,4 +1,4 @@
-VERSION ?= $(shell git describe --tags --abbrev=0 || echo "1.0.0-dev" | tr -d '\n')
+VERSION ?= $(shell git describe --tags --abbrev=0 || echo "0.0.0-dev" | tr -d '\n')
 
 .PHONY: build test
 

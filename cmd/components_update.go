@@ -7,7 +7,7 @@ import (
 	"path"
 	"time"
 
-	"github.com/blang/semver/v4"
+	"github.com/Masterminds/semver/v3"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 )
@@ -43,21 +43,24 @@ var componentsUpdateCmd = &cobra.Command{
 			logger.Fatal(err)
 		}
 
-		lastVersion, err := semver.Parse(path.Base(u.Path))
+		lastVersion, err := semver.NewVersion(path.Base(u.Path))
 		if err != nil {
 			logger.Fatal(err)
 		}
 
-		currentVersion, err := semver.Parse(version)
+		currentVersion, err := semver.NewVersion(version)
 		if err != nil {
 			logger.Fatal(err)
 		}
 
-		if lastVersion.GE(currentVersion) {
+		if lastVersion.GreaterThan(currentVersion) {
 			fmt.Printf(`There is a new version of arenadata-installer %q available. Current version: %q.
 You can download the latest version: %s
 `, lastVersion, currentVersion, link)
+			return
 		}
+
+		fmt.Println("Already up to date.")
 	},
 }
 
