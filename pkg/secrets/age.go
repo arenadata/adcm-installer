@@ -1,4 +1,4 @@
-package crypt
+package secrets
 
 import (
 	"bytes"
@@ -13,7 +13,7 @@ type AgeCrypt struct {
 	*age.X25519Identity
 }
 
-func New() (*AgeCrypt, error) {
+func NewAgeCrypt() (*AgeCrypt, error) {
 	id, err := age.GenerateX25519Identity()
 	if err != nil {
 		return nil, err
@@ -21,7 +21,7 @@ func New() (*AgeCrypt, error) {
 	return &AgeCrypt{id}, nil
 }
 
-func FromString(s string) (*AgeCrypt, error) {
+func NewAgeCryptFromString(s string) (*AgeCrypt, error) {
 	id, err := age.ParseX25519Identity(s)
 	if err != nil {
 		return nil, err
