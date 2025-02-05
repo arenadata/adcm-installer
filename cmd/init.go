@@ -50,7 +50,6 @@ func init() {
 	f.Bool("pg", false, "Postgres manifest initialization")
 	initCmd.MarkFlagsOneRequired("adcm", "pg")
 
-	f.Bool("new-age-key", false, "Generate new and save age-key if not exists")
 	f.Bool("force", false, "Force overwrite existing config file")
 	f.BoolP("interactive", "i", false, "Interactive mode (set sensitive data)")
 
@@ -93,12 +92,11 @@ func initProject(cmd *cobra.Command, args []string) {
 		logger.Fatalf("config file %q already exists", outputPath)
 	}
 
-	crypt, err := readOrCreateNewAgeKey(cmd, "age-key")
+	crypt, ok, err := readOrCreateNewAgeKey(cmd, "age-key")
 	if err != nil {
 		logger.Fatal(err)
 	}
-
-	if getBool(cmd, "new-age-key") {
+	if ok {
 		if err = saveAgeKey(ageKeyFileName, crypt); err != nil {
 			logger.Fatal(err)
 		}

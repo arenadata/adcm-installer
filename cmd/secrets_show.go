@@ -40,7 +40,7 @@ func secretsShow(cmd *cobra.Command, _ []string) {
 		logger.Fatal("config file not provided")
 	}
 
-	ageKey, err := readOrCreateNewAgeKey(cmd, "age-key")
+	ageKey, _, err := readOrCreateNewAgeKey(cmd, "age-key")
 	if err != nil {
 		logger.Fatal(err)
 	}

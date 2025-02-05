@@ -37,7 +37,7 @@ func adcmDefaults(app *Application) {
 
 	if len(app.Spec.Volumes) == 0 {
 		app.Spec.Volumes = append(app.Spec.Volumes, Volume{
-			Source: compose.ContainerName(app.Namespace, app.Kind, app.Name),
+			Source: compose.Concat("-", app.Namespace, app.Kind, app.Name),
 			Target: compose.ADCMVolumeTarget,
 		})
 	} else if len(app.Spec.Volumes) == 1 && len(app.Spec.Volumes[0].Target) == 0 {
@@ -53,22 +53,26 @@ func adcm(app *Application, svc *composeTypes.ServiceConfig, s meta.ConversionSc
 	if err := secretsRequired(app); err != nil {
 		return err
 	}
+	scope := s.Meta().Context.(*meta.Scope)
 
 	adcmDefaults(app)
 
-	if v, ok := app.Annotations[DependsOnKey]; ok {
+	var envs []compose.Env
+
+	_, envOk := app.Spec.Env["DB_PORT"]
+	if v, ok := app.Annotations[DependsOnKey]; ok && !envOk {
 		kn := strings.Split(v, ".")
 		if len(kn) != 2 {
 			return fmt.Errorf("adcm: invalid depends-on key format: %s", v)
 		}
 
-		deps := compose.ServiceName(kn[0], kn[1])
-		app.Spec.Env["DB_HOST"] = &deps
+		deps := compose.Concat("-", kn[0], kn[1])
+		envs = append(envs, compose.Env{Name: "DB_HOST", Value: &deps})
+	}
 
-		if _, ok := app.Spec.Env["DB_PORT"]; !ok {
-			def := strconv.Itoa(int(compose.PostgresPort))
-			app.Spec.Env["DB_PORT"] = &def
-		}
+	if _, ok := app.Spec.Env["DB_PORT"]; !ok {
+		defPort := strconv.Itoa(int(compose.PostgresPort))
+		envs = append(envs, compose.Env{Name: "DB_PORT", Value: &defPort})
 	}
 
 	annoDB := app.Annotations[DatabaseKey]
@@ -80,9 +84,20 @@ func adcm(app *Application, svc *composeTypes.ServiceConfig, s meta.ConversionSc
 			app.Annotations[DatabaseKey] = annoDB
 		}
 
-		app.Spec.Env["DB_NAME"] = &annoDB
+		envs = append(envs, compose.Env{Name: "DB_NAME", Value: &annoDB})
 	} else {
 		app.Annotations[DatabaseKey] = *envDB
+	}
+
+	helpers := compose.NewModHelpers()
+	helpers = append(helpers,
+		compose.Environment(envs...),
+		compose.CapAdd("CAP_CHOWN", "CAP_SETUID", "CAP_SETGID"), //FIXME: nginx run with root privileges
+		compose.CapDropAll(),
+	)
+
+	if err := helpers.Run(scope.Project, svc); err != nil {
+		return fmt.Errorf("adcm: mod project/service failed: %v", err)
 	}
 
 	return applicationToService(app, svc, s)

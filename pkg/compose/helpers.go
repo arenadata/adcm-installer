@@ -3,23 +3,26 @@ package compose
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/arenadata/arenadata-installer/pkg/secrets"
+	"github.com/arenadata/arenadata-installer/pkg/utils"
 
 	"github.com/compose-spec/compose-go/v2/format"
 	composeTypes "github.com/compose-spec/compose-go/v2/types"
+	"github.com/docker/compose/v2/pkg/api"
 	"github.com/gosimple/slug"
 )
 
-type Helper func(*composeTypes.Project, *composeTypes.ServiceConfig) error
+type ModHelper func(*composeTypes.Project, *composeTypes.ServiceConfig) error
 
-type Helpers []Helper
+type ModHelpers []ModHelper
 
-func NewHelpers() Helpers {
-	return Helpers{}
+func NewModHelpers() ModHelpers {
+	return ModHelpers{}
 }
 
-func (h Helpers) Run(prj *composeTypes.Project, svc *composeTypes.ServiceConfig) error {
+func (h ModHelpers) Run(prj *composeTypes.Project, svc *composeTypes.ServiceConfig) error {
 	for _, helper := range h {
 		if err := helper(prj, svc); err != nil {
 			return err
@@ -28,14 +31,50 @@ func (h Helpers) Run(prj *composeTypes.Project, svc *composeTypes.ServiceConfig)
 	return nil
 }
 
-func DependsOn(key string) Helper {
+func BaseCustomLabels(kind, namespace string) ModHelper {
+	return func(prj *composeTypes.Project, svc *composeTypes.ServiceConfig) error {
+		svc.CustomLabels = map[string]string{
+			api.ProjectLabel:     namespace,
+			api.ServiceLabel:     svc.Name,
+			api.VersionLabel:     api.ComposeVersion,
+			api.OneoffLabel:      "False",
+			api.ConfigFilesLabel: "",
+			ADLabel:              strings.ToLower(kind),
+		}
+		return nil
+	}
+}
+
+func CapAdd(caps ...string) ModHelper {
+	return func(_ *composeTypes.Project, svc *composeTypes.ServiceConfig) error {
+		if len(svc.CapAdd) == 0 {
+			svc.CapAdd = caps
+		}
+		return nil
+	}
+}
+
+func CapDrop(caps ...string) ModHelper {
+	return func(_ *composeTypes.Project, svc *composeTypes.ServiceConfig) error {
+		if len(svc.CapDrop) == 0 {
+			svc.CapDrop = caps
+		}
+		return nil
+	}
+}
+
+func CapDropAll() ModHelper {
+	return CapDrop("ALL")
+}
+
+func DependsOn(key string) ModHelper {
 	return func(prj *composeTypes.Project, svc *composeTypes.ServiceConfig) error {
 		kindName := strings.Split(key, ".")
 		if len(kindName) != 2 {
 			return fmt.Errorf("invalid depends-on key: %s", key)
 		}
 
-		key = ServiceName(kindName[0], kindName[1])
+		key = Concat("-", kindName[0], kindName[1])
 		svc.DependsOn = composeTypes.DependsOnConfig{
 			key: composeTypes.ServiceDependency{
 				Condition: composeTypes.ServiceConditionHealthy,
@@ -47,27 +86,88 @@ func DependsOn(key string) Helper {
 	}
 }
 
-func Environment(env map[string]*string, notReplaces ...bool) Helper {
+type Env struct {
+	Name  string
+	Value *string
+}
+
+func ToEnv(m map[string]*string) []Env {
+	envs := make([]Env, len(m))
+	i := 0
+	for k, v := range m {
+		envs[i] = Env{Name: k, Value: v}
+		i++
+	}
+	return envs
+}
+
+func Environment(envs ...Env) ModHelper {
 	return func(_ *composeTypes.Project, svc *composeTypes.ServiceConfig) error {
-		var notReplace bool
-		if len(notReplaces) > 0 && notReplaces[0] {
-			notReplace = true
+		if svc.Environment == nil {
+			svc.Environment = make(composeTypes.MappingWithEquals)
 		}
 
-		for k, v := range env {
-			if notReplace {
-				if _, ok := svc.Environment[k]; ok {
-					continue
-				}
+		for _, e := range envs {
+			if _, ok := svc.Environment[e.Name]; ok {
+				continue
 			}
 
-			svc.Environment[k] = v
+			svc.Environment[e.Name] = e.Value
 		}
 		return nil
 	}
 }
 
-func Secrets(sec *secrets.Secrets) Helper {
+type HealthCheckConfig struct {
+	Cmd           []string
+	Interval      time.Duration
+	Timeout       time.Duration
+	StartPeriod   time.Duration
+	StartInterval time.Duration
+	Retries       uint64
+}
+
+func HealthCheck(conf HealthCheckConfig) ModHelper {
+	return func(_ *composeTypes.Project, svc *composeTypes.ServiceConfig) error {
+		svc.HealthCheck = &composeTypes.HealthCheckConfig{
+			Test: conf.Cmd,
+		}
+		if conf.Interval > 0 {
+			svc.HealthCheck.Interval = utils.Ptr(composeTypes.Duration(conf.Interval))
+		}
+		if conf.Timeout > 0 {
+			svc.HealthCheck.Timeout = utils.Ptr(composeTypes.Duration(conf.Timeout))
+		}
+		if conf.StartPeriod > 0 {
+			svc.HealthCheck.StartPeriod = utils.Ptr(composeTypes.Duration(conf.StartPeriod))
+		}
+		if conf.StartInterval > 0 {
+			svc.HealthCheck.StartInterval = utils.Ptr(composeTypes.Duration(conf.StartInterval))
+		}
+		if conf.Retries > 0 {
+			svc.HealthCheck.Retries = utils.Ptr(conf.Retries)
+		}
+		return nil
+	}
+}
+
+type ServiceNetworkConfig struct {
+	Name    string
+	Aliases []string
+}
+
+func Networks(netCfg ...ServiceNetworkConfig) ModHelper {
+	return func(_ *composeTypes.Project, svc *composeTypes.ServiceConfig) error {
+		svc.Networks = make(map[string]*composeTypes.ServiceNetworkConfig)
+		for _, cfg := range netCfg {
+			svc.Networks[cfg.Name] = &composeTypes.ServiceNetworkConfig{Aliases: cfg.Aliases}
+		}
+
+		return nil
+	}
+}
+
+func Secrets(sec *secrets.Secrets) ModHelper {
 	return func(prj *composeTypes.Project, svc *composeTypes.ServiceConfig) error {
 		if len(svc.Name) == 0 {
 			return fmt.Errorf("service.name not set")
@@ -83,7 +183,7 @@ func Secrets(sec *secrets.Secrets) Helper {
 		var mode uint32 = 0o440
 		for path, file := range sec.Files {
 			k := slug.Make(path)
-			key := ServiceName(k, svc.Name)
+			key := Concat("-", k, svc.Name)
 
 			mountPath := SecretsPath + path
 			if path[0] == '/' {
@@ -125,7 +225,34 @@ func Secrets(sec *secrets.Secrets) Helper {
 	}
 }
 
-func Configs(configs map[string]string) Helper {
+func ContainerName(ns, kind, name string) ModHelper {
+	return func(_ *composeTypes.Project, svc *composeTypes.ServiceConfig) error {
+		if len(svc.ContainerName) == 0 {
+			svc.ContainerName = containerName(ns, kind, name)
+		}
+		return nil
+	}
+}
+
+func Image(image string) ModHelper {
+	return func(_ *composeTypes.Project, svc *composeTypes.ServiceConfig) error {
+		if len(svc.Image) == 0 {
+			svc.Image = image
+		}
+		return nil
+	}
+}
+
+func ServiceName(kind, name string) ModHelper {
+	return func(_ *composeTypes.Project, svc *composeTypes.ServiceConfig) error {
+		if len(svc.Name) == 0 {
+			svc.Name = serviceName(kind, name)
+		}
+		return nil
+	}
+}
+
+func Configs(configs map[string]string) ModHelper {
 	return func(prj *composeTypes.Project, svc *composeTypes.ServiceConfig) error {
 		if prj.Configs == nil {
 			prj.Configs = make(composeTypes.Configs)
@@ -153,7 +280,7 @@ func Configs(configs map[string]string) Helper {
 	}
 }
 
-func Network(networkName string) Helper {
+func Network(networkName string) ModHelper {
 	return func(prj *composeTypes.Project, svc *composeTypes.ServiceConfig) error {
 		if prj.Networks == nil {
 			prj.Networks = make(composeTypes.Networks)
@@ -170,7 +297,7 @@ func Network(networkName string) Helper {
 	}
 }
 
-func Ports(ports []string) Helper {
+func Ports(ports []string) ModHelper {
 	return func(prj *composeTypes.Project, svc *composeTypes.ServiceConfig) error {
 		for _, port := range ports {
 			p, err := composeTypes.ParsePortConfig(port)
@@ -184,7 +311,42 @@ func Ports(ports []string) Helper {
 	}
 }
 
-func Volumes(volumes []string) Helper {
+func ProjectName(name string) ModHelper {
+	return func(prj *composeTypes.Project, _ *composeTypes.ServiceConfig) error {
+		if len(prj.Name) == 0 {
+			prj.Name = name
+		}
+
+		return nil
+	}
+}
+
+func ReadOnlyRootFilesystem() ModHelper {
+	return func(_ *composeTypes.Project, svc *composeTypes.ServiceConfig) error {
+		svc.ReadOnly = true
+		return nil
+	}
+}
+
+func SecurityOpts(securityOpts ...string) ModHelper {
+	return func(_ *composeTypes.Project, svc *composeTypes.ServiceConfig) error {
+		svc.SecurityOpt = securityOpts
+		return nil
+	}
+}
+
+func SecurityOptsNoNewPrivileges() ModHelper {
+	return SecurityOpts("no-new-privileges")
+}
+
+func TmpFs(mountPoints ...string) ModHelper {
+	return func(_ *composeTypes.Project, svc *composeTypes.ServiceConfig) error {
+		svc.Tmpfs = mountPoints
+		return nil
+	}
+}
+
+func Volumes(volumes []string) ModHelper {
 	return func(prj *composeTypes.Project, svc *composeTypes.ServiceConfig) error {
 		for _, volume := range volumes {
 			vol, err := format.ParseVolume(volume)
@@ -192,12 +354,29 @@ func Volumes(volumes []string) Helper {
 				return err
 			}
 			if vol.Type == composeTypes.VolumeTypeVolume {
+				if prj.Volumes == nil {
+					prj.Volumes = make(composeTypes.Volumes)
+				}
+
 				vol.Bind = nil
 				prj.Volumes[vol.Source] = composeTypes.VolumeConfig{Name: vol.Source}
 			}
 
 			svc.Volumes = append(svc.Volumes, vol)
 		}
+		return nil
+	}
+}
+
+func User(user, group string) ModHelper {
+	return func(_ *composeTypes.Project, svc *composeTypes.ServiceConfig) error {
+		if len(svc.User) > 0 {
+			return nil
+		}
+		if len(group) == 0 {
+			group = "root"
+		}
+		svc.User = strings.Join([]string{user, group}, ":")
 		return nil
 	}
 }

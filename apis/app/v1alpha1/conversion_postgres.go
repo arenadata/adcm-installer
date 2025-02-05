@@ -21,7 +21,7 @@ func postgresDefaults(app *Application) {
 
 	if len(app.Spec.Volumes) == 0 {
 		app.Spec.Volumes = append(app.Spec.Volumes, Volume{
-			Source: compose.ContainerName(app.Namespace, app.Kind, app.Name),
+			Source: compose.Concat("-", app.Namespace, app.Kind, app.Name),
 			Target: compose.PostgresVolumeTarget,
 		})
 	} else if len(app.Spec.Volumes) == 1 && len(app.Spec.Volumes[0].Target) == 0 {
@@ -37,29 +37,26 @@ func postgres(app *Application, svc *composeTypes.ServiceConfig, s meta.Conversi
 	if err := secretsRequired(app); err != nil {
 		return err
 	}
+	scope := s.Meta().Context.(*meta.Scope)
 
 	postgresDefaults(app)
 
-	svc.HealthCheck = &composeTypes.HealthCheckConfig{
-		Test: composeTypes.HealthCheckTest{
-			"CMD-SHELL", "pg_isready", "--quiet",
-		},
-		Interval: utils.Ptr(composeTypes.Duration(10 * time.Second)),
-		Timeout:  utils.Ptr(composeTypes.Duration(3 * time.Second)),
-		Retries:  utils.Ptr(uint64(3)),
-	}
-
-	if svc.Environment == nil {
-		svc.Environment = make(composeTypes.MappingWithEquals)
-	}
-	svc.Environment["PGUSER"] = utils.Ptr(compose.PostgresUser)
-
-	scope := s.Meta().Context.(*meta.Scope)
-
-	svc.Name = compose.ServiceName(app.Kind, app.Name)
-	helpers := compose.NewHelpers()
 	initScripts := map[string]string{"/docker-entrypoint-initdb.d/init.sql": compose.PostgresHelperSQLScript}
+	healthCheckConfig := compose.HealthCheckConfig{
+		Cmd:      []string{"CMD-SHELL", "pg_isready", "--quiet"},
+		Interval: 10 * time.Second,
+		Timeout:  3 * time.Second,
+		Retries:  3,
+	}
+
+	helpers := compose.NewModHelpers()
+	// compose.SetServiceName call before compose.Configs/Secrets
+	helpers = append(helpers, compose.ServiceName(app.Kind, app.Name))
+	helpers = append(helpers, compose.HealthCheck(healthCheckConfig))
 	helpers = append(helpers, compose.Configs(initScripts))
+	helpers = append(helpers, compose.Environment(compose.Env{Name: "PGUSER", Value: utils.Ptr(compose.PostgresUser)}))
+	helpers = append(helpers, compose.User(compose.PostgresUser, ""))
+
 	if err := helpers.Run(scope.Project, svc); err != nil {
 		return err
 	}

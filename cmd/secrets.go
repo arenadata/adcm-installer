@@ -107,13 +107,15 @@ func readAgeKeyFromFile(path string) (string, error) {
 	return "", fmt.Errorf("no age key found")
 }
 
-func readOrCreateNewAgeKey(cmd *cobra.Command, key string) (*secrets.AgeCrypt, error) {
+func readOrCreateNewAgeKey(cmd *cobra.Command, key string) (*secrets.AgeCrypt, bool, error) {
 	ageKey, err := getAgeKey(cmd, key)
 	if err != nil && !errors.Is(err, noAgeKeyProvided) {
-		return nil, err
+		return nil, false, err
 	} else if err == nil {
-		return secrets.NewAgeCryptFromString(ageKey)
+		cryptKey, err := secrets.NewAgeCryptFromString(ageKey)
+		return cryptKey, false, err
 	}
 
-	return secrets.NewAgeCrypt()
+	cryptKey, err := secrets.NewAgeCrypt()
+	return cryptKey, true, err
 }
