@@ -2,125 +2,75 @@ package cmd
 
 import (
 	"net/http"
-	"os"
 
-	"github.com/arenadata/adcm-installer/models"
-	"github.com/arenadata/adcm-installer/utils"
+	"github.com/arenadata/arenadata-installer/pkg/compose"
 
 	"github.com/blang/semver/v4"
 	"github.com/heroku/docker-registry-client/registry"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
 )
 
-// versionsCmd represents the versions command
-var versionsCmd = &cobra.Command{
+var listVersionsCmd = &cobra.Command{
 	Aliases: []string{"v"},
 	Use:     "versions",
-	Short:   "A brief description of your command",
-	Run: func(cmd *cobra.Command, args []string) {
-		logger := log.WithField("command", "list-versions")
-
-		configFile, _ := cmd.Flags().GetString("config")
-		conf, err := getAdcmConfig(configFile)
-		if err != nil {
-			logger.Fatal(err)
-		}
-
-		u := "https://" + *conf.Image.Registry
-		transport := registry.WrapTransport(http.DefaultTransport, u, "", "")
-		reg := &registry.Registry{
-			URL: u,
-			Client: &http.Client{
-				Transport: transport,
-			},
-			Logf: logger.Debugf,
-		}
-
-		tags, err := reg.Tags(*conf.Image.Name)
-		if err != nil {
-			logger.Fatal(err)
-		}
-
-		var versions []semver.Version
-		for _, tag := range tags {
-			ver, err := semver.Parse(tag)
-			if err == nil {
-				versions = append(versions, ver)
-			}
-		}
-
-		semver.Sort(versions)
-
-		i := len(versions) - 1
-		end := 0
-		all, _ := cmd.Flags().GetBool("all")
-		if !all {
-			end = i - 4
-			if end < 0 {
-				end = 0
-			}
-		}
-
-		for ; i >= end; i-- {
-			cmd.Println(versions[i].String())
-		}
-	},
+	Short:   "List versions of Arenadata products",
+	Run:     listVersions,
 }
 
 func init() {
-	listCmd.AddCommand(versionsCmd)
-	versionsCmd.Flags().StringP("config", "c", models.ADCMConfigFile, "Path to configuration file")
-	versionsCmd.Flags().BoolP("all", "a", false, "List all versions")
+	listCmd.AddCommand(listVersionsCmd)
+	listVersionsCmd.Flags().BoolP("all", "a", false, "List all versions")
+
+	listVersionsCmd.Flags().Bool("adcm", false, "List ADCM versions")
+	listVersionsCmd.MarkFlagsOneRequired("adcm")
+	//listVersionsCmd.MarkFlagsMutuallyExclusive("adcm")
 }
 
-func getAdcmConfig(path string) (*models.ADCMConfig, error) {
-	defaultRegistry := models.ADImageRegistry
-	var imap map[string]any
-	config := &models.ADCMConfig{}
+func listVersions(cmd *cobra.Command, _ []string) {
+	logger := log.WithField("command", "list-versions")
 
-	isConfigFileExists, err := utils.FileExists(path)
+	u := "https://" + compose.ADImageRegistry
+	transport := registry.WrapTransport(http.DefaultTransport, u, "", "")
+	reg := &registry.Registry{
+		URL: u,
+		Client: &http.Client{
+			Transport: transport,
+		},
+		Logf: logger.Debugf,
+	}
+
+	var image string
+	if getBool(cmd, "adcm") {
+		image = compose.ADCMImageName
+	}
+
+	tags, err := reg.Tags(image)
 	if err != nil {
-		return nil, err
+		logger.Fatal(err)
 	}
 
-	if !isConfigFileExists {
-		models.SetDefaultsADCMConfig(config, &defaultRegistry)
-		return config, nil
+	var versions []semver.Version
+	for _, tag := range tags {
+		ver, err := semver.Parse(tag)
+		if err == nil {
+			versions = append(versions, ver)
+		}
 	}
 
-	fi, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = fi.Close() }()
+	semver.Sort(versions)
 
-	if err = yaml.NewDecoder(fi).Decode(&imap); err != nil {
-		return nil, err
-	}
-
-	reg, ok := imap["registry"]
-	if ok {
-		defaultRegistry = reg.(string)
+	i := len(versions) - 1
+	end := 0
+	all, _ := cmd.Flags().GetBool("all")
+	if !all {
+		end = i - 4
+		if end < 0 {
+			end = 0
+		}
 	}
 
-	adcm, ok := imap["adcm"]
-	if !ok {
-		models.SetDefaultsADCMConfig(config, &defaultRegistry)
-		return config, nil
+	for ; i >= end; i-- {
+		cmd.Println(versions[i].String())
 	}
-
-	b, err := yaml.Marshal(adcm)
-	if err != nil {
-		return nil, err
-	}
-
-	if err = yaml.Unmarshal(b, &config); err != nil {
-		return nil, err
-	}
-
-	models.SetDefaultsADCMConfig(config, &defaultRegistry)
-
-	return config, nil
 }

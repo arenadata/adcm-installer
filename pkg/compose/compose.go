@@ -7,8 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/arenadata/adcm-installer/models"
-
 	"github.com/compose-spec/compose-go/v2/types"
 	"github.com/containerd/platforms"
 	"github.com/docker/cli/cli/command"
@@ -42,19 +40,24 @@ func NewComposeService(ops ...command.CLIOption) (*Compose, error) {
 	return &Compose{svc: compose.NewComposeService(cli), cli: cli}, nil
 }
 
+func (c Compose) Create(ctx context.Context, prj *types.Project) error {
+	timeout := 30 * time.Second
+
+	return c.svc.Create(ctx, prj, api.CreateOptions{
+		Timeout: &timeout,
+	})
+}
+
 func (c Compose) Up(ctx context.Context, prj *types.Project) error {
 	timeout := 30 * time.Second
 
 	return c.svc.Up(ctx, prj, api.UpOptions{
 		Create: api.CreateOptions{
 			Timeout: &timeout,
-			//AssumeYes: true,
 		},
 		Start: api.StartOptions{
-			//Project:     prj,
 			Wait:        true,
 			WaitTimeout: timeout,
-			Services:    prj.ServiceNames(),
 		},
 	})
 }
@@ -83,8 +86,8 @@ func (c Compose) Exec(ctx context.Context, containerName, cmd string, args ...st
 	exec := container.NewExecOptions()
 	exec.Command = []string{cmd}
 	exec.Command = append(exec.Command, args...)
-	exec.Interactive = true
-	exec.TTY = true
+	exec.Interactive = false
+	exec.TTY = false
 
 	return container.RunExec(ctx, c.cli, containerName, exec)
 }
@@ -163,7 +166,7 @@ func (c Compose) Stop(ctx context.Context, projectName string, services ...strin
 }
 
 func (c Compose) Start(ctx context.Context, projectName string, services ...string) error {
-	return c.svc.Start(ctx, projectName, api.StartOptions{Services: services})
+	return c.svc.Start(ctx, projectName, api.StartOptions{AttachTo: services, Services: services, Wait: true})
 }
 
 func (c Compose) Pause(ctx context.Context, projectName string, services ...string) error {
@@ -172,36 +175,6 @@ func (c Compose) Pause(ctx context.Context, projectName string, services ...stri
 
 func (c Compose) UnPause(ctx context.Context, projectName string, services ...string) error {
 	return c.svc.UnPause(ctx, projectName, api.PauseOptions{Services: services})
-}
-
-func NewProject(conf *models.Config) *types.Project {
-	return &types.Project{
-		Name:     *conf.DeploymentID,
-		Services: make(types.Services),
-		Volumes:  make(types.Volumes),
-	}
-}
-
-func NewADCMProject(conf *models.Config, configFilePath string) (*types.Project, error) {
-	project := NewProject(conf)
-	networkName := *conf.DeploymentID
-	if networkName == models.DeploymentId {
-		networkName = models.DeploymentId + "_adcm"
-	}
-	project.Networks = map[string]types.NetworkConfig{networkName: {Name: networkName}}
-	project.ComposeFiles = []string{configFilePath}
-
-	if *conf.Postgres.Install {
-		if err := addServicePG(project, conf); err != nil {
-			return nil, err
-		}
-	}
-
-	if err := addServiceADCM(project, conf); err != nil {
-		return nil, err
-	}
-
-	return project, nil
 }
 
 func hasProjectLabelFilter() filters.KeyValuePair {
@@ -213,7 +186,7 @@ func hasConfigHashLabel() filters.KeyValuePair {
 }
 
 func hasConfigADLabel() filters.KeyValuePair {
-	return filters.Arg("label", models.ADLabel)
+	return filters.Arg("label", ADLabel)
 }
 
 func containersToStacks(containers []moby.Container) ([]api.Stack, error) {
