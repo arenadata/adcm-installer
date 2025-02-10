@@ -26,7 +26,7 @@ const (
 
 var initCmd = &cobra.Command{
 	Use:   "init <name>",
-	Short: "Initialize a new config",
+	Short: "Initialize a new configuration",
 	PreRunE: func(cmd *cobra.Command, args []string) error {
 		if err := cobra.ExactArgs(1)(cmd, args); err != nil {
 			return err
