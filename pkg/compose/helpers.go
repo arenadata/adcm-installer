@@ -258,8 +258,8 @@ func Configs(configs map[string]string) ModHelper {
 			prj.Configs = make(composeTypes.Configs)
 		}
 
-		if len(configs) > 0 && svc.Environment == nil {
-			svc.Environment = make(composeTypes.MappingWithEquals)
+		if len(configs) > 0 && prj.Environment == nil {
+			prj.Environment = make(composeTypes.Mapping)
 		}
 
 		var mode uint32 = 0o444
