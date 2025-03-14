@@ -53,8 +53,8 @@ func postgres(app *Application, svc *composeTypes.ServiceConfig, s meta.Conversi
 	// compose.SetServiceName call before compose.Configs/Secrets
 	helpers = append(helpers, compose.ServiceName(app.Kind, app.Name))
 	helpers = append(helpers, compose.HealthCheck(healthCheckConfig))
-	helpers = append(helpers, compose.Configs(initScripts))
 	helpers = append(helpers, compose.Environment(compose.Env{Name: "PGUSER", Value: utils.Ptr(compose.PostgresUser)}))
+	helpers = append(helpers, compose.Configs(initScripts))
 	helpers = append(helpers, compose.User(compose.PostgresUser, ""))
 
 	if err := helpers.Run(scope.Project, svc); err != nil {

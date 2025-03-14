@@ -258,6 +258,10 @@ func Configs(configs map[string]string) ModHelper {
 			prj.Configs = make(composeTypes.Configs)
 		}
 
+		if len(configs) > 0 && svc.Environment == nil {
+			svc.Environment = make(composeTypes.MappingWithEquals)
+		}
+
 		var mode uint32 = 0o444
 		for path, content := range configs {
 			k := slug.Make(path)
