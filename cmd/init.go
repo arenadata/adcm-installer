@@ -85,10 +85,11 @@ func flagWithMutuallyExclusiveInteractive(f *pflag.FlagSet, name string, value a
 func initProject(cmd *cobra.Command, args []string) {
 	logger := log.WithField("command", "init")
 
+	force, _ := cmd.Flags().GetBool("force")
 	outputPath, _ := cmd.Flags().GetString("output")
 	if ok, err := utils.FileExists(outputPath); err != nil {
 		logger.Fatal(err)
-	} else if ok {
+	} else if ok && !force {
 		logger.Fatalf("config file %q already exists", outputPath)
 	}
 
