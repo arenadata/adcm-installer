@@ -179,7 +179,9 @@ func applyProject(cmd *cobra.Command, _ []string) {
 
 		enc.SetIndent(2)
 		_ = enc.Encode(projectInit)
+		_ = enc.Encode(projectInit.Environment)
 		_ = enc.Encode(prj)
+		_ = enc.Encode(prj.Environment)
 		return
 	}
 
@@ -384,13 +386,13 @@ func newInitProject(project *composeTypes.Project, hasManagedAdpg bool) (*compos
 
 		switch svcType {
 		case "adcm":
-			dbName := project.Environment["adcm-db-name"]
-			dbOwner := project.Environment["adcm-db-user"]
+			dbName := projectInit.Environment["adcm-db-name"]
+			dbOwner := projectInit.Environment["adcm-db-user"]
 			pgInit.DB[dbName] = &types.Database{
 				Owner: dbOwner,
 			}
 			pgInit.Role[dbOwner] = &types.Role{
-				Password: project.Environment["adcm-db-pass"],
+				Password: projectInit.Environment["adcm-db-pass"],
 			}
 		case "adpg":
 			adpgInitServiceName = "init-" + svcName
@@ -421,14 +423,14 @@ func newInitProject(project *composeTypes.Project, hasManagedAdpg bool) (*compos
 			}
 		//case "consul":
 		case "vault":
-			dbName := project.Environment["vault-db-name"]
-			dbOwner := project.Environment["vault-db-user"]
-			pgInit.DB[dbName] = &types.Database{
-				Owner: dbOwner,
-			}
-			pgInit.Role[dbOwner] = &types.Role{
-				Password: project.Environment["vault-db-pass"],
-			}
+			//dbName := project.Environment["vault-db-name"]
+			//dbOwner := project.Environment["vault-db-user"]
+			//pgInit.DB[dbName] = &types.Database{
+			//	Owner: dbOwner,
+			//}
+			//pgInit.Role[dbOwner] = &types.Role{
+			//	Password: project.Environment["vault-db-pass"],
+			//}
 		}
 	}
 
