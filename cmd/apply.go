@@ -474,14 +474,18 @@ func newInitProject(project *composeTypes.Project, hasManagedAdpg bool) (*compos
 func fillProjectFields(project *composeTypes.Project) {
 	for name, s := range project.Services {
 		s.Name = name
-		s.CustomLabels = map[string]string{
-			api.ProjectLabel:     project.Name,
-			api.ServiceLabel:     name,
-			api.VersionLabel:     api.ComposeVersion,
-			api.WorkingDirLabel:  project.WorkingDir,
-			api.ConfigFilesLabel: strings.Join(project.ComposeFiles, ","),
-			api.OneoffLabel:      "False", // default, will be overridden by `run` command
+
+		if s.CustomLabels == nil {
+			s.CustomLabels = map[string]string{}
 		}
+
+		s.CustomLabels[api.ProjectLabel] = project.Name
+		s.CustomLabels[api.ServiceLabel] = name
+		s.CustomLabels[api.VersionLabel] = api.ComposeVersion
+		s.CustomLabels[api.WorkingDirLabel] = project.WorkingDir
+		s.CustomLabels[api.ConfigFilesLabel] = strings.Join(project.ComposeFiles, ",")
+		s.CustomLabels[api.OneoffLabel] = "False"
+
 		project.Services[name] = s
 	}
 }
