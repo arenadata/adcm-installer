@@ -6,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/arenadata/arenadata-installer/pkg/compose"
+	"github.com/arenadata/adcm-installer/pkg/compose"
 
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -14,8 +14,8 @@ import (
 
 var deleteCmd = &cobra.Command{
 	Aliases: []string{"del", "rm"},
-	Use:     "delete [namespace]",
-	Short:   "Delete resources by file name or namespace",
+	Use:     "delete [name]",
+	Short:   "Delete resources by file name or installation name",
 	PreRunE: cobra.MaximumNArgs(1),
 	Run:     deleteProject,
 }
@@ -49,23 +49,19 @@ func deleteProject(cmd *cobra.Command, args []string) {
 		}
 	}
 
-	var namespace string
+	var name string
 	if len(args) > 0 {
-		namespace = args[0]
+		name = args[0]
 	} else {
 		configFilePath, _ := cmd.Flags().GetString("file")
-		if len(configFilePath) == 0 {
-			logger.Fatal("config file not provided")
-		}
-
-		meta, err := readConfigMeta(configFilePath)
+		prj, err := readConfigFile(configFilePath)
 		if err != nil {
 			logger.Fatal(err)
 		}
-		namespace = meta.Namespace
+		name = prj.Name
 	}
 
-	if err = comp.Down(cmd.Context(), namespace, deleteVolumes); err != nil {
+	if err = comp.Down(cmd.Context(), name, deleteVolumes); err != nil {
 		logger.Fatal(err)
 	}
 }

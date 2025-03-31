@@ -54,7 +54,7 @@ var componentsUpdateCmd = &cobra.Command{
 		}
 
 		if lastVersion.GreaterThan(currentVersion) {
-			fmt.Printf(`There is a new version of arenadata-installer %q available. Current version: %q.
+			fmt.Printf(`There is a new version of adcm-installer %q available. Current version: %q.
 You can download the latest version: %s
 `, lastVersion, currentVersion, link)
 			return

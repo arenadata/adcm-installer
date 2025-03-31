@@ -6,8 +6,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/arenadata/arenadata-installer/pkg/secrets"
-	"github.com/arenadata/arenadata-installer/pkg/utils"
+	"github.com/arenadata/adcm-installer/pkg/secrets"
+	"github.com/arenadata/adcm-installer/pkg/utils"
 
 	"github.com/gosimple/slug"
 	"github.com/spf13/cobra"

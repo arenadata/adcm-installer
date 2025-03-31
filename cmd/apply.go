@@ -2,31 +2,45 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
 
-	"github.com/arenadata/arenadata-installer/internal/api/meta"
-	"github.com/arenadata/arenadata-installer/internal/runtime"
-	"github.com/arenadata/arenadata-installer/pkg/compose"
-	"github.com/arenadata/arenadata-installer/pkg/secrets"
+	"github.com/arenadata/adcm-installer/assets"
+	"github.com/arenadata/adcm-installer/pkg/compose"
+	"github.com/arenadata/adcm-installer/pkg/secrets"
+	"github.com/arenadata/adcm-installer/pkg/types"
+	"github.com/arenadata/adcm-installer/pkg/utils"
 
+	"github.com/compose-spec/compose-go/v2/cli"
 	composeTypes "github.com/compose-spec/compose-go/v2/types"
-	composev2 "github.com/docker/compose/v2/pkg/compose"
+	dockerCompose "github.com/docker/compose/v2/cmd/compose"
+	"github.com/docker/compose/v2/pkg/api"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
 
 const (
-	roleArgs = `psql -c "SELECT create_role_if_not_exists('%s', '%s');" 1>/dev/null`
-	dbArgs   = `createdb -O %s %s 2>/dev/null || true`
+	PathSeparator         = "ARENADATA_APP_PATH_SEPARATOR"
+	FilePath              = "ARENADATA_APP_FILE"
+	DisableDefaultEnvFile = "ARENADATA_APP_DISABLE_ENV_FILE"
+
+	xsecretsKey = "x-secrets"
 )
 
-var applyCmd = &cobra.Command{
-	Use:   "apply",
-	Short: "Apply a configuration by file name",
-	Run:   applyProject,
-}
+var (
+	fileNames = []string{"adcm.yaml", "adcm.yml", "ad-app.yaml", "ad-app.yml"}
+
+	applyCmd = &cobra.Command{
+		Use:   "apply",
+		Short: "Apply a configuration by file name",
+		Run:   applyProject,
+	}
+)
 
 func init() {
 	rootCmd.AddCommand(applyCmd)
@@ -34,16 +48,19 @@ func init() {
 	ageKeyFlags(applyCmd, "age-key", ageKeyFileName)
 	configFileFlags(applyCmd)
 
-	applyCmd.Flags().Bool("dry-run", false, "Simulate an apply and generate docker-compose.yaml without secrets")
+	applyCmd.Flags().Bool("dry-run", false, "Simulate an apply command and generate docker-compose.yaml without secrets")
+	applyCmd.Flags().StringP("output", "o", "", "Output filename")
 }
 
 func applyProject(cmd *cobra.Command, _ []string) {
 	logger := log.WithField("command", "apply")
 
 	configFilePath, _ := cmd.Flags().GetString("file")
-	if len(configFilePath) == 0 {
-		logger.Fatal("config file not provided")
+	prj, err := readConfigFile(configFilePath)
+	if err != nil {
+		logger.Fatal(err)
 	}
+	fillADCMLabels(prj)
 
 	ageKey, err := getAgeKey(cmd, "age-key")
 	if err != nil {
@@ -55,23 +72,97 @@ func applyProject(cmd *cobra.Command, _ []string) {
 		logger.Fatal(err)
 	}
 
-	scope := &meta.Scope{
-		DryRun: getBool(cmd, "dry-run"),
-		AgeKey: dec,
-		Project: &composeTypes.Project{
-			Services: composeTypes.Services{},
-		},
+	if xSecrets, ok := prj.Extensions[xsecretsKey].(*xsecrets); ok {
+		if xSecrets.AgeRecipient != dec.Recipient().String() {
+			logger.Fatal("age_recipient not match")
+		}
+
+		for k, v := range xSecrets.Data {
+			v, err = dec.DecryptValue(v)
+			if err != nil {
+				logger.Fatal(err)
+			}
+			prj.Environment[k] = v
+		}
 	}
 
-	apps, err := readConfigFile(configFilePath)
-	if err != nil {
+	helpers := compose.NewModHelpers()
+	for svcName, svc := range prj.Services {
+		svcType := svc.Labels[compose.ADAppTypeLabelKey]
+		if svcType == "adpg" && svc.ReadOnly {
+			uid, gid := "0", "0"
+			if len(svc.User) > 0 {
+				uidGid := strings.Split(svc.User, ":")
+				uid = uidGid[0]
+				if len(uidGid) > 1 {
+					gid = uidGid[1]
+				}
+			}
+
+			mnt := fmt.Sprintf("/var/run/postgresql:uid=%s,gid=%s", uid, gid)
+			helpers = append(helpers, compose.TmpFs(svcName, mnt))
+		}
+
+		var serviceSecrets []compose.Secret
+		for _, sec := range svc.Secrets {
+			envKey, ok := mapFlagsToEnv[sec.Source]
+			if !ok {
+				// TODO
+			}
+
+			serviceSecrets = append(serviceSecrets, compose.Secret{
+				Source: sec.Source,
+				EnvKey: envKey,
+				Value:  prj.Environment[sec.Source],
+				ENV:    true,
+			})
+		}
+
+		helpers = append(helpers,
+			compose.Secrets(svcName, serviceSecrets...),
+		)
+	}
+
+	if err = helpers.Run(prj); err != nil {
 		logger.Fatal(err)
 	}
 
-	for _, app := range apps {
-		if err = runtime.Convert(app, new(composeTypes.ServiceConfig), scope); err != nil {
+	projectInit, err := newInitProject(prj)
+	if err != nil {
+		logger.Fatal(err)
+	}
+	fillADCMLabels(projectInit)
+
+	// compose.Up(projectInit)
+	// chown/init
+	// init vault (vault operator init -key-shares=1 -key-threshold=1 -format=json > keys.json)
+	// write keys.json to x-secrets
+	// wait for all containers stopped
+	// compose.Down(projectInit) w/o delete volumes
+	// compose.Up(prj)
+
+	if err = assets.LoadBusybox(cmd.Context()); err != nil {
+		logger.Fatal(err)
+	}
+
+	if getBool(cmd, "dry-run") {
+		closer, err := setOutput(cmd)
+		if err != nil {
 			logger.Fatal(err)
 		}
+		defer func() { _ = closer.Close() }()
+
+		enc := yaml.NewEncoder(cmd.OutOrStdout())
+		defer func() { _ = enc.Close() }()
+
+		enc.SetIndent(2)
+
+		removeEnv(projectInit)
+		_ = enc.Encode(projectInit)
+
+		removeEnv(prj)
+		_ = enc.Encode(prj)
+		return
 	}
 
 	comp, err := compose.NewComposeService()
@@ -79,76 +170,327 @@ func applyProject(cmd *cobra.Command, _ []string) {
 		logger.Fatal(err)
 	}
 
-	if scope.DryRun {
-		enc := yaml.NewEncoder(os.Stdout)
-		enc.SetIndent(2)
-		if err = enc.Encode(scope.Project); err != nil {
-			logger.Fatal(err)
-		}
-		return
-	}
-
-	if err = comp.Create(cmd.Context(), scope.Project); err != nil {
+	if err = comp.Up(cmd.Context(), projectInit); err != nil {
 		logger.Fatal(err)
 	}
 
-	servicesWithDependsOn := scope.Project.ServicesWithDependsOn()
-	var servicesWithoutDependsOn []string
-	err = composev2.InDependencyOrder(cmd.Context(), scope.Project, func(ctx context.Context, s string) error {
-		if !in(servicesWithDependsOn, s) {
-			servicesWithoutDependsOn = append(servicesWithoutDependsOn, s)
-		}
-		return nil
-	})
-	if err != nil {
+	if err = comp.Down(cmd.Context(), projectInit.Name, false); err != nil {
 		logger.Fatal(err)
 	}
 
-	if err = comp.Start(cmd.Context(), scope.Project.Name, servicesWithoutDependsOn...); err != nil {
-		logger.Fatal(err)
-	}
-
-	err = composev2.InDependencyOrder(cmd.Context(), scope.Project, func(ctx context.Context, s string) error {
-		if in(servicesWithDependsOn, s) {
-			svc := scope.Project.Services[s]
-			for depSvcName := range svc.DependsOn {
-				depSvc := scope.Project.Services[depSvcName]
-				app := depSvc.CustomLabels[compose.ADLabel]
-				if len(app) == 0 {
-					return nil
-				}
-
-				if app == "postgres" {
-					dbname := scope.Project.Environment[compose.PostgresDbNameFilename+"-"+s]
-					dbuser := scope.Project.Environment[compose.PostgresUserFilename+"-"+s]
-					dbpassword := scope.Project.Environment[compose.PostgresPasswordFilename+"-"+s]
-					roleCreate := fmt.Sprintf(roleArgs, dbuser, dbpassword)
-					dbCreate := fmt.Sprintf(dbArgs, dbuser, dbname)
-
-					for i, arg := range []string{roleCreate, dbCreate} {
-						if err = comp.Exec(cmd.Context(), depSvc.ContainerName, "/bin/sh", "-ce", arg); err != nil {
-							logger.Fatalf("prepare DB failed: %d", i)
-						}
-					}
-
-					if err = comp.Start(cmd.Context(), scope.Project.Name, s); err != nil {
-						logger.Fatal(err)
-					}
-				}
-			}
-		}
-		return err
-	})
-	if err != nil {
+	if err = comp.Up(cmd.Context(), prj); err != nil {
 		logger.Fatal(err)
 	}
 }
 
-func in(a []string, s string) bool {
-	for _, i := range a {
-		if i == s {
-			return true
+func findFiles(names []string, pwd string) []string {
+	var candidates []string
+	for _, n := range names {
+		f := filepath.Join(pwd, n)
+		if _, err := os.Stat(f); err == nil {
+			candidates = append(candidates, f)
 		}
 	}
-	return false
+	return candidates
+}
+
+func readConfigFile(conf string) (*composeTypes.Project, error) {
+	opts := dockerCompose.ProjectOptions{
+		Offline: true,
+	}
+	var sec *xsecrets
+	projectOpts := []cli.ProjectOptionsFn{
+		cli.WithConsistency(false),
+		cli.WithDotEnv,
+		WithConfigFileEnv,
+		WithEnvFiles(opts.EnvFiles...),
+		cli.WithExtension(xsecretsKey, sec),
+	}
+
+	if len(conf) > 0 {
+		opts.ConfigPaths = []string{conf}
+	} else {
+		projectOpts = append(projectOpts, WithDefaultConfigPath)
+	}
+
+	prj, _, err := opts.ToProject(context.Background(), nil, nil, projectOpts...)
+
+	return prj, err
+}
+
+// WithConfigFileEnv allow to set compose config file paths by ARENADATA_APP_FILE environment variable
+func WithConfigFileEnv(o *cli.ProjectOptions) error {
+	if len(o.ConfigPaths) > 0 {
+		return nil
+	}
+	sep := o.Environment[PathSeparator]
+	if sep == "" {
+		sep = string(os.PathListSeparator)
+	}
+	f, ok := o.Environment[FilePath]
+	if ok {
+		paths, err := absolutePaths(strings.Split(f, sep))
+		o.ConfigPaths = paths
+		return err
+	}
+	return nil
+}
+
+func absolutePaths(p []string) ([]string, error) {
+	var paths []string
+	for _, f := range p {
+		if f == "-" {
+			paths = append(paths, f)
+			continue
+		}
+		abs, err := filepath.Abs(f)
+		if err != nil {
+			return nil, err
+		}
+		f = abs
+		if _, err := os.Stat(f); err != nil {
+			return nil, err
+		}
+		paths = append(paths, f)
+	}
+	return paths, nil
+}
+
+// WithDefaultConfigPath searches for default config files from working directory
+func WithDefaultConfigPath(o *cli.ProjectOptions) error {
+	if len(o.ConfigPaths) > 0 {
+		return nil
+	}
+	pwd, err := o.GetWorkingDir()
+	if err != nil {
+		return err
+	}
+	for {
+		candidates := findFiles(fileNames, pwd)
+		if len(candidates) > 0 {
+			winner := candidates[0]
+			if len(candidates) > 1 {
+				log.Warnf("Found multiple config files with supported names: %s", strings.Join(candidates, ", "))
+				log.Warnf("Using %s", winner)
+			}
+			o.ConfigPaths = append(o.ConfigPaths, winner)
+
+			return nil
+		}
+		parent := filepath.Dir(pwd)
+		if parent == pwd {
+			// no config file found, but that's not a blocker if caller only needs project name
+			return nil
+		}
+		pwd = parent
+	}
+}
+
+// WithEnvFiles set env file(s) to be loaded to set project environment.
+// defaults to local .env file if no explicit file is selected, until ARENADATA_APP_DISABLE_ENV_FILE is set
+func WithEnvFiles(file ...string) cli.ProjectOptionsFn {
+	return func(o *cli.ProjectOptions) error {
+		if len(file) > 0 {
+			o.EnvFiles = file
+			return nil
+		}
+		if v, ok := os.LookupEnv(DisableDefaultEnvFile); ok {
+			b, err := strconv.ParseBool(v)
+			if err != nil {
+				return err
+			}
+			if b {
+				return nil
+			}
+		}
+
+		wd, err := o.GetWorkingDir()
+		if err != nil {
+			return err
+		}
+		defaultDotEnv := filepath.Join(wd, ".env")
+
+		s, err := os.Stat(defaultDotEnv)
+		if os.IsNotExist(err) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if !s.IsDir() {
+			o.EnvFiles = []string{defaultDotEnv}
+		}
+		return nil
+	}
+}
+
+func newInitProject(project *composeTypes.Project) (*composeTypes.Project, error) {
+	var hasManagedAdpg bool
+	for _, svc := range project.Services {
+		if svc.Labels[compose.ADAppTypeLabelKey] == "adpg" {
+			hasManagedAdpg = true
+		}
+	}
+
+	helpers := compose.NewModHelpers()
+	projectInit := &composeTypes.Project{
+		Name:        project.Name,
+		Services:    composeTypes.Services{},
+		Environment: project.Environment,
+		Secrets:     project.Secrets,
+		Volumes:     project.Volumes,
+	}
+
+	var adpgInitServiceName string
+	pgInit := types.NewPGInit()
+	for svcName, svc := range project.Services {
+		svcType := svc.Labels[compose.ADAppTypeLabelKey]
+
+		var chownServiceName string
+		if len(svc.User) > 0 && len(svc.Volumes) > 0 {
+			var mounts []string
+			for _, mnt := range svc.Volumes {
+				mounts = append(mounts, mnt.Target)
+			}
+
+			chownServiceName = "chown-" + svcName
+			dirs := strings.Join(mounts, " ")
+			projectInit.Services[chownServiceName] = composeTypes.ServiceConfig{
+				User:       "0:0",
+				Image:      assets.ImageName,
+				Entrypoint: composeTypes.ShellCommand{"/bin/sh"},
+				Command: []string{
+					"-cex",
+					fmt.Sprintf("chown %s %s", svc.User, dirs),
+				},
+				Volumes: svc.Volumes,
+			}
+		}
+
+		if !hasManagedAdpg {
+			continue
+		}
+
+		switch svcType {
+		case "adcm":
+			dbName := project.Environment["adcm-db-name"]
+			dbOwner := project.Environment["adcm-db-user"]
+			pgInit.DB[dbName] = &types.Database{
+				Owner: dbOwner,
+			}
+			pgInit.Role[dbOwner] = &types.Role{
+				Password: project.Environment["adcm-db-pass"],
+			}
+		case "adpg":
+			adpgInitServiceName = "init-" + svcName
+			projectInit.Services[adpgInitServiceName] = composeTypes.ServiceConfig{
+				User:    svc.User,
+				Image:   svc.Image,
+				Command: []string{"initdb"},
+				Volumes: svc.Volumes,
+				Secrets: svc.Secrets,
+				Environment: composeTypes.MappingWithEquals{
+					"PG_ENTRYPOINT_DEBUG": utils.Ptr("true"),
+				},
+			}
+			helpers = append(helpers, compose.Secrets(adpgInitServiceName, compose.Secret{
+				Source: "adpg-password",
+				EnvKey: "POSTGRES_PASSWORD",
+				ENV:    false,
+			}))
+
+			if len(chownServiceName) > 0 {
+				helpers = append(helpers,
+					compose.DependsOn(adpgInitServiceName,
+						compose.Depended{
+							Service:   chownServiceName,
+							Condition: composeTypes.ServiceConditionCompletedSuccessfully,
+						}),
+				)
+			}
+		//case "consul":
+		case "vault":
+			dbName := project.Environment["vault-db-name"]
+			dbOwner := project.Environment["vault-db-user"]
+			pgInit.DB[dbName] = &types.Database{
+				Owner: dbOwner,
+			}
+			pgInit.Role[dbOwner] = &types.Role{
+				Password: project.Environment["vault-db-pass"],
+			}
+		}
+	}
+
+	if len(pgInit.DB) > 0 || len(pgInit.Role) > 0 {
+		initJson, err := json.Marshal(pgInit)
+		if err != nil {
+			return nil, err
+		}
+
+		helpers = append(helpers, compose.Secrets(adpgInitServiceName, compose.Secret{
+			Source: "init.json",
+			EnvKey: "POSTGRES_INITDB",
+			Value:  string(initJson),
+			ENV:    false,
+		}))
+	}
+
+	const pauseContainerName = "pause"
+	var deps []compose.Depended
+	for svcName := range projectInit.Services {
+		deps = append(deps, compose.Depended{Service: svcName, Condition: composeTypes.ServiceConditionCompletedSuccessfully})
+	}
+	helpers = append(helpers, compose.DependsOn(pauseContainerName, deps...))
+
+	projectInit.Services[pauseContainerName] = composeTypes.ServiceConfig{
+		Name:       pauseContainerName,
+		Image:      assets.ImageName,
+		Command:    []string{"sleep", "120"},
+		StopSignal: "SIGKILL",
+	}
+
+	if err := helpers.Run(projectInit); err != nil {
+		return nil, err
+	}
+
+	fillProjectFields(projectInit)
+
+	return projectInit, nil
+}
+
+func fillProjectFields(project *composeTypes.Project) {
+	for name, s := range project.Services {
+		s.Name = name
+		s.CustomLabels = map[string]string{
+			api.ProjectLabel:     project.Name,
+			api.ServiceLabel:     name,
+			api.VersionLabel:     api.ComposeVersion,
+			api.WorkingDirLabel:  project.WorkingDir,
+			api.ConfigFilesLabel: strings.Join(project.ComposeFiles, ","),
+			api.OneoffLabel:      "False", // default, will be overridden by `run` command
+		}
+		project.Services[name] = s
+	}
+}
+
+func fillADCMLabels(project *composeTypes.Project) {
+	for name, s := range project.Services {
+		s.Name = name
+
+		if s.CustomLabels == nil {
+			s.CustomLabels = map[string]string{}
+		}
+		s.CustomLabels[compose.ADLabel] = ""
+
+		project.Services[name] = s
+	}
+}
+
+func removeEnv(prj *composeTypes.Project) {
+	env := prj.Environment
+	for k := range env {
+		env[k] = ""
+	}
+
+	prj.Environment = env
 }

@@ -2,6 +2,13 @@
 /_tmp
 /adcm
 /bin
+/assets/*.tar*
+/data
+/skopeo
+
+ad-app.yml
 ad-app.yaml
+adcm.yml
+adcm.yaml
 
 *.key

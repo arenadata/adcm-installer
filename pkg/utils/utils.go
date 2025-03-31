@@ -1,7 +1,6 @@
 package utils
 
 import (
-	"bufio"
 	"fmt"
 	"math/rand/v2"
 	"os"
@@ -34,30 +33,11 @@ func FileExists(path string) (bool, error) {
 	return true, nil
 }
 
-func SplitYamlFile(file string) ([][]byte, error) {
-	fi, err := os.Open(file)
-	if err != nil {
-		return nil, err
-	}
-	defer fi.Close()
-
-	scanner := bufio.NewScanner(fi)
-	scanner.Split(bufio.ScanLines)
-
-	var out [][]byte
-	var buf []byte
-	for scanner.Scan() {
-		if scanner.Text() == "---" && len(buf) > 0 {
-			out = append(out, buf)
-			buf = []byte{}
-			continue
+func In(a []string, s string) bool {
+	for _, i := range a {
+		if i == s {
+			return true
 		}
-
-		b := scanner.Bytes()
-		b = append(b, '\n')
-		buf = append(buf, b...)
 	}
-	out = append(out, buf)
-
-	return out, nil
+	return false
 }

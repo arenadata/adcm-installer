@@ -2,6 +2,7 @@ package secrets
 
 import (
 	"bytes"
+	"encoding/base64"
 	"io"
 	"strings"
 
@@ -29,6 +30,22 @@ func NewAgeCryptFromString(s string) (*AgeCrypt, error) {
 	return &AgeCrypt{id}, nil
 }
 
+func (c *AgeCrypt) EncryptValue(v string) (string, error) {
+	buf := new(bytes.Buffer)
+	w, err := age.Encrypt(buf, c.Recipient())
+	if err != nil {
+		return "", err
+	}
+	if _, err = w.Write([]byte(v)); err != nil {
+		return "", err
+	}
+	if err = w.Close(); err != nil {
+		return "", err
+	}
+
+	return base64.StdEncoding.EncodeToString(buf.Bytes()), nil
+}
+
 func (c *AgeCrypt) Encrypt(data string) (string, error) {
 	buf := new(bytes.Buffer)
 	aw := armor.NewWriter(buf)
@@ -44,6 +61,25 @@ func (c *AgeCrypt) Encrypt(data string) (string, error) {
 		return "", err
 	}
 	if err = aw.Close(); err != nil {
+		return "", err
+	}
+
+	return buf.String(), nil
+}
+
+func (c *AgeCrypt) DecryptValue(v string) (string, error) {
+	data, err := base64.StdEncoding.DecodeString(v)
+	if err != nil {
+		return "", err
+	}
+
+	r, err := age.Decrypt(bytes.NewReader(data), c)
+	if err != nil {
+		return "", err
+	}
+
+	buf := new(bytes.Buffer)
+	if _, err = io.Copy(buf, r); err != nil {
 		return "", err
 	}
 

@@ -1,15 +1,65 @@
 package cmd
 
 import (
+	"fmt"
+	"io"
+	"strings"
+
+	"github.com/arenadata/adcm-installer/pkg/compose"
+
+	"github.com/docker/compose/v2/cmd/formatter"
+	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 )
 
-var listCmd = &cobra.Command{
-	Aliases: []string{"ls"},
-	Use:     "list",
-	Short:   "Lists resources",
+type stackView struct {
+	Name        string
+	Status      string
+	ConfigFiles string
+}
+
+var listNamespacesCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List running ADCM installation",
+	Run:   listNamespaces,
 }
 
 func init() {
-	rootCmd.AddCommand(listCmd)
+	rootCmd.AddCommand(listNamespacesCmd)
+
+	listNamespacesCmd.Flags().BoolP("all", "a", false, "Show all")
+}
+
+func listNamespaces(cmd *cobra.Command, _ []string) {
+	logger := log.WithField("command", "list")
+
+	comp, err := compose.NewComposeService()
+	if err != nil {
+		logger.Fatal(err)
+	}
+
+	all, _ := cmd.Flags().GetBool("all")
+	stacks, err := comp.List(cmd.Context(), all)
+	if err != nil {
+		logger.Fatal(err)
+	}
+
+	view := make([]stackView, len(stacks))
+	for i, s := range stacks {
+		configFile := s.ConfigFiles
+		if len(configFile) == 0 {
+			configFile = "N/A"
+		}
+		view[i] = stackView{
+			Name:        s.Name,
+			Status:      strings.TrimSpace(fmt.Sprintf("%s %s", s.Status, s.Reason)),
+			ConfigFiles: configFile,
+		}
+	}
+
+	err = formatter.Print(view, formatter.TABLE, cmd.OutOrStdout(), func(w io.Writer) {
+		for _, stack := range view {
+			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\n", stack.Name, stack.Status, stack.ConfigFiles)
+		}
+	}, "NAMES", "STATUS", "CONFIG FILES")
 }

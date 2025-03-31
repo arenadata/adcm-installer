@@ -2,8 +2,9 @@ package cmd
 
 import (
 	"net/http"
+	"net/url"
 
-	"github.com/arenadata/arenadata-installer/pkg/compose"
+	"github.com/arenadata/adcm-installer/pkg/compose"
 
 	"github.com/blang/semver/v4"
 	"github.com/heroku/docker-registry-client/registry"
@@ -12,37 +13,35 @@ import (
 )
 
 var listVersionsCmd = &cobra.Command{
-	Aliases: []string{"v"},
-	Use:     "versions",
-	Short:   "List versions of Arenadata products",
-	Run:     listVersions,
+	Use:   "adcm-versions",
+	Short: "List versions of Arenadata products",
+	Run:   listVersions,
 }
 
 func init() {
-	listCmd.AddCommand(listVersionsCmd)
+	rootCmd.AddCommand(listVersionsCmd)
 	listVersionsCmd.Flags().BoolP("all", "a", false, "List all versions")
-
-	listVersionsCmd.Flags().Bool("adcm", false, "List ADCM versions")
-	listVersionsCmd.MarkFlagsOneRequired("adcm")
-	//listVersionsCmd.MarkFlagsMutuallyExclusive("adcm")
 }
 
 func listVersions(cmd *cobra.Command, _ []string) {
-	logger := log.WithField("command", "list-versions")
+	logger := log.WithField("command", "adcm-versions")
 
-	u := "https://" + compose.ADImageRegistry
-	transport := registry.WrapTransport(http.DefaultTransport, u, "", "")
+	u, err := url.Parse("https://" + compose.ADCMImage)
+	if err != nil {
+		logger.Fatal(err)
+	}
+
+	image := u.Path
+	u.Path = ""
+	registryHost := u.String()
+
+	transport := registry.WrapTransport(http.DefaultTransport, registryHost, "", "")
 	reg := &registry.Registry{
-		URL: u,
+		URL: registryHost,
 		Client: &http.Client{
 			Transport: transport,
 		},
 		Logf: logger.Debugf,
-	}
-
-	var image string
-	if getBool(cmd, "adcm") {
-		image = compose.ADCMImageName
 	}
 
 	tags, err := reg.Tags(image)

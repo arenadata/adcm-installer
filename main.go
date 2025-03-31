@@ -1,6 +1,6 @@
 package main
 
-import "github.com/arenadata/arenadata-installer/cmd"
+import "github.com/arenadata/adcm-installer/cmd"
 
 func main() {
 	cmd.Execute()

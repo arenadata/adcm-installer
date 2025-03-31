@@ -6,7 +6,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/arenadata/arenadata-installer/pkg/secrets"
+	"github.com/arenadata/adcm-installer/pkg/secrets"
 
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"

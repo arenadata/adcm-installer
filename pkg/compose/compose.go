@@ -3,6 +3,7 @@ package compose
 import (
 	"context"
 	"fmt"
+	"github.com/docker/compose/v2/cmd/formatter"
 	"sort"
 	"strings"
 	"time"
@@ -40,12 +41,27 @@ func NewComposeService(ops ...command.CLIOption) (*Compose, error) {
 	return &Compose{svc: compose.NewComposeService(cli), cli: cli}, nil
 }
 
+func (c Compose) LogConsumer(ctx context.Context) api.LogConsumer {
+	return formatter.NewLogConsumer(
+		ctx,
+		c.cli.Out(),
+		c.cli.Err(),
+		false,
+		false,
+		true,
+	)
+}
+
 func (c Compose) Create(ctx context.Context, prj *types.Project) error {
 	timeout := 30 * time.Second
 
 	return c.svc.Create(ctx, prj, api.CreateOptions{
 		Timeout: &timeout,
 	})
+}
+
+func (c Compose) Start(ctx context.Context, projectName string, services ...string) error {
+	return c.svc.Start(ctx, projectName, api.StartOptions{AttachTo: services, Services: services, Wait: true})
 }
 
 func (c Compose) Up(ctx context.Context, prj *types.Project) error {
@@ -78,10 +94,6 @@ func (c Compose) list(ctx context.Context, all bool, filter ...filters.KeyValueP
 	})
 }
 
-func (c Compose) GetProject(ctx context.Context, projectName string) (*types.Project, error) {
-	return c.svc.Generate(ctx, api.GenerateOptions{ProjectName: projectName})
-}
-
 func (c Compose) Exec(ctx context.Context, containerName, cmd string, args ...string) error {
 	exec := container.NewExecOptions()
 	exec.Command = []string{cmd}
@@ -107,10 +119,10 @@ func (c Compose) List(ctx context.Context, all bool) ([]api.Stack, error) {
 
 func (c Compose) ContainerRun(
 	ctx context.Context,
-	platform platforms.Platform,
+	containerConfig *containerTypes.Config,
 	hostConfig *containerTypes.HostConfig,
 	networkConfig *network.NetworkingConfig,
-	containerConfig *containerTypes.Config,
+	platform *platforms.Platform,
 	containerName string,
 ) error {
 	dockerCli := c.cli.Client()
@@ -118,14 +130,14 @@ func (c Compose) ContainerRun(
 		containerConfig,
 		hostConfig,
 		networkConfig,
-		&platform,
+		platform,
 		containerName,
 	)
 	if err != nil {
 		return err
 	}
 
-	// TODO: maybe use docker cli?
+	//// TODO: maybe use docker cli?
 	//container.NewRunCommand()
 
 	if err = dockerCli.ContainerStart(ctx, resp.ID, containerTypes.StartOptions{}); err != nil {
@@ -140,7 +152,7 @@ func (c Compose) ContainerRun(
 	var count int
 	for newContainer.State.Status != "running" {
 		if count == 10 {
-			return fmt.Errorf("timeout waiting for container to start")
+			return fmt.Errorf("timeout waiting for container %s to start", containerName)
 		}
 
 		newContainer, err = dockerCli.ContainerInspect(ctx, resp.ID)
@@ -159,22 +171,6 @@ func (c Compose) ContainerRemove(ctx context.Context, containerName string) erro
 	return c.cli.Client().ContainerRemove(ctx, containerName, containerTypes.RemoveOptions{
 		Force: true,
 	})
-}
-
-func (c Compose) Stop(ctx context.Context, projectName string, services ...string) error {
-	return c.svc.Stop(ctx, projectName, api.StopOptions{Services: services})
-}
-
-func (c Compose) Start(ctx context.Context, projectName string, services ...string) error {
-	return c.svc.Start(ctx, projectName, api.StartOptions{AttachTo: services, Services: services, Wait: true})
-}
-
-func (c Compose) Pause(ctx context.Context, projectName string, services ...string) error {
-	return c.svc.Pause(ctx, projectName, api.PauseOptions{Services: services})
-}
-
-func (c Compose) UnPause(ctx context.Context, projectName string, services ...string) error {
-	return c.svc.UnPause(ctx, projectName, api.PauseOptions{Services: services})
 }
 
 func hasProjectLabelFilter() filters.KeyValuePair {
