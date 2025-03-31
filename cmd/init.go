@@ -167,9 +167,27 @@ func initProject(cmd *cobra.Command, args []string) {
 				wrap(&sslCert, "ADCM database SSL certificate file path:", "", false, false)
 				wrap(&sslKey, "ADCM database SSL private key file path:", "", false, false)
 
-				xsecretsData["adcm-pg-ssl-ca"] = sslCa
-				xsecretsData["adcm-pg-ssl-cert"] = sslCert
-				xsecretsData["adcm-pg-ssl-key"] = sslKey
+				if len(sslCa) > 0 {
+					b, err := os.ReadFile(sslCa)
+					if err != nil {
+						logger.Fatal(err)
+					}
+					xsecretsData["adcm-pg-ssl-ca"] = string(b)
+				}
+				if len(sslCert) > 0 {
+					b, err := os.ReadFile(sslCert)
+					if err != nil {
+						logger.Fatal(err)
+					}
+					xsecretsData["adcm-pg-ssl-cert"] = string(b)
+				}
+				if len(sslKey) > 0 {
+					b, err := os.ReadFile(sslKey)
+					if err != nil {
+						logger.Fatal(err)
+					}
+					xsecretsData["adcm-pg-ssl-key"] = string(b)
+				}
 			}
 		}
 	}
