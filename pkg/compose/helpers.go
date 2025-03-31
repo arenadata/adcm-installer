@@ -309,6 +309,30 @@ func Platform(svcName, platform string) ModHelper {
 	}
 }
 
+func PublishPort(svcName string, publishPort string, targetPort uint16) ModHelper {
+	return func(prj *composeTypes.Project) error {
+		svc, ok := prj.Services[svcName]
+		if !ok {
+			return fmt.Errorf("service %q not found", svcName)
+		}
+
+		for _, svcPort := range svc.Ports {
+			if svcPort.Published == publishPort {
+				return nil
+			}
+		}
+
+		svc.Ports = append(svc.Ports, composeTypes.ServicePortConfig{
+			Mode:      "ingress",
+			Target:    uint32(targetPort),
+			Published: publishPort,
+		})
+
+		prj.Services[svcName] = svc
+		return nil
+	}
+}
+
 func PullPolicy(svcName, pullPolicy string) ModHelper {
 	return func(prj *composeTypes.Project) error {
 		svc, ok := prj.Services[svcName]

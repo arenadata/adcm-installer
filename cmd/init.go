@@ -23,6 +23,11 @@ import (
 
 const (
 	postgresSSLMode = "disable"
+
+	svcNameAdcm   = "adcm"
+	svcNameAdpg   = "adpg"
+	svcNameConsul = "consul"
+	svcNameVault  = "vault"
 )
 
 type xsecrets struct {
@@ -156,36 +161,127 @@ func initProject(cmd *cobra.Command, _ []string) {
 		}
 	}
 
+	interactive := getBool(cmd, "interactive")
+	managedADPG := getBool(cmd, svcNameAdpg)
+	managedConsul := getBool(cmd, svcNameConsul)
+	managedVault := getBool(cmd, svcNameVault)
+
 	name, _ := cmd.Flags().GetString("name")
 	prj := &composeTypes.Project{
 		Name:     name,
 		Services: composeTypes.Services{},
 	}
 
+	helpers := compose.NewModHelpers()
+
+	addService(svcNameAdcm, prj)
+	helpers = append(helpers, compose.CapAdd(svcNameAdcm, "CAP_CHOWN", "CAP_SETUID", "CAP_SETGID"))
+
+	xsecretsData := map[string]string{}
+	if !managedADPG || interactive {
+		if !managedADPG {
+			//"ADCM database host (required)"
+			//"ADCM database port (default: 5432)"
+			//helpers = append(helpers, compose.Environment(svcNameAdcm,
+			//	compose.Env{Name: "DB_HOST", Value: utils.Ptr()},
+			//	compose.Env{Name: "DB_PORT", Value: utils.Ptr()},
+			//))
+		}
+
+		//"ADCM database name (default: adcm)"
+		//xsecretsData["adcm-db-name"] =
+		//"ADCM database user (default: adcm)"
+		//xsecretsData["adcm-db-user"] =
+
+		//var dbPass string
+		if managedADPG {
+			//"ADCM database password (random generated)"
+		} else {
+			//"ADCM database password (required)"
+		}
+		//xsecretsData["adcm-db-pass"] = dbPass
+
+		if interactive {
+			//"ADCM image (default: hub.arenadata.io/adcm/adcm)"
+			//"ADCM image tag (default: 2.5.0)"
+			// helpers = append(helpers, compose.Image(svcNameAdcm, ))
+
+			//"ADCM publish port (default: 8000)"
+			//helpers = append(helpers, compose.PublishPort(svcNameAdcm, ))
+		}
+	}
+
+	if managedADPG {
+		addService(svcNameAdpg, prj)
+
+		helpers = append(helpers,
+			compose.DependsOn(svcNameAdcm, compose.Depended{Service: svcNameAdpg}),
+			compose.HealthCheck(svcNameAdpg, compose.HealthCheckConfig{
+				Cmd:      []string{"CMD-SHELL", "pg-entrypoint isready postgres"},
+				Interval: 10 * time.Second,
+				Timeout:  3 * time.Second,
+				Retries:  3,
+			}),
+		)
+
+		if interactive {
+			//"ADPG superuser (postgres) password (random generated)"
+			//xsecretsData["adpg-password"] =
+
+			//"ADPG image (default: hub.arenadata.io/adpg)"
+			//"ADPG image tag (default: v16.4.2)"
+			// helpers = append(helpers, compose.Image(svcNameAdpg))
+
+			//"ADPG publish port (default: 0)"
+			//helpers = append(helpers, compose.PublishPort(svcNameAdpg, ))
+		}
+	}
+
+	if managedConsul {
+		addService(svcNameConsul, prj)
+	}
+
+	if managedVault {
+		addService(svcNameVault, prj)
+	}
+
 	var svcList []string
-	for k := range services {
+	for k := range prj.Services {
 		svcList = append(svcList, k)
 	}
 	sort.Strings(svcList)
 
-	enabledServices := defineServicesFromFlag(cmd, logger, svcList)
-	svcList = []string{}
-	for svcName, svc := range enabledServices {
-		svcList = append(svcList, svcName)
-		port := services[svcName].port
-		var ports []composeTypes.ServicePortConfig
-		if svc.port > 0 {
-			ports = append(ports, composeTypes.ServicePortConfig{
-				Mode:      "ingress",
-				Target:    uint32(port),
-				Published: strconv.FormatUint(uint64(svc.port), 10),
-			})
+	uid := 10001
+	for _, svcName := range svcList {
+		if svcName != "adcm" {
+			uids := strconv.Itoa(uid)
+			uid++
+			helpers = append(helpers,
+				compose.ReadOnlyRootFilesystem(svcName),
+				compose.SecurityOptsNoNewPrivileges(svcName),
+				compose.User(svcName, uids, uids),
+			)
 		}
-		prj.Services[svcName] = composeTypes.ServiceConfig{Image: svc.Image(), Ports: ports}
-	}
-	sort.Strings(svcList)
 
-	xsecretsData := readSecretsFromFlag(cmd, logger)
+		hostname := prj.Name + "-" + svcName
+		helpers = append(helpers,
+			compose.CapDropAll(svcName),
+			compose.Hostname(svcName, hostname),
+			compose.RestartPolicy(svcName, composeTypes.RestartPolicyUnlessStopped),
+			compose.PullPolicy(svcName, composeTypes.PullPolicyAlways),
+		)
+		svcMounts := services[svcName].mounts
+		for _, mount := range svcMounts {
+			mount = strings.TrimRight(mount, "/")
+			src := hostname
+			if len(svcMounts) > 1 {
+				idx := strings.LastIndex(mount, "/")
+				src += "-" + mount[idx+1:]
+			}
+			helpers = append(helpers, compose.Volumes(svcName, src+":"+mount))
+		}
+	}
+
 	for k, v := range xsecretsData {
 		v, err = crypt.EncryptValue(v)
 		if err != nil {
@@ -209,9 +305,6 @@ func initProject(cmd *cobra.Command, _ []string) {
 		Data:         xsecretsData,
 	}}
 
-	helpers := compose.NewModHelpers()
-
-	uid := 10001
 	for _, svcName := range svcList {
 		hostname := prj.Name + "-" + svcName
 		helpers = append(helpers,
@@ -291,7 +384,7 @@ func initProject(cmd *cobra.Command, _ []string) {
 	if _, ok := enabledServices["vault"]; ok {
 		helpers = append(helpers,
 			compose.HealthCheck("consul", compose.HealthCheckConfig{
-				Cmd:         []string{"CMD-SHELL", "wget", "-q", "-O", "-", "http://vault:8200/v1/sys/health"},
+				Cmd:         []string{"CMD-SHELL", "wget -q -O - http://vault:8200/v1/sys/health"},
 				Interval:    3 * time.Second,
 				Timeout:     5 * time.Second,
 				StartPeriod: 5 * time.Second,
@@ -405,7 +498,7 @@ func readSecretsFromFlag(cmd *cobra.Command, logger *log.Entry) map[string]strin
 	}
 
 	wrap("adcm-db-host", "ADCM database hostname/ip:", false, true)
-	port, err := getPortValue(cmd, "adcm-db-port", "ADCM database:", false, adcmInteractive)
+	port, err := getPortValue(cmd, "adcm-db-port", "ADCM database port:", false, adcmInteractive)
 	if err != nil {
 		logger.Fatal(err)
 	}
@@ -566,13 +659,98 @@ func setOutput(cmd *cobra.Command) (io.Closer, error) {
 	return output, nil
 }
 
-type flag struct {
-	v       pflag.Value
-	changed bool
+func addService(name string, prj *composeTypes.Project) {
+	prj.Services[name] = composeTypes.ServiceConfig{Name: name}
 }
 
-func getFlagsWithValues(cmd *cobra.Command, values map[string]flag) {
-	cmd.Flags().VisitAll(func(f *pflag.Flag) {
-		values[f.Name] = flag{f.Value, f.Changed}
-	})
+func adcm(prj *composeTypes.Project) {
+	const name = "adcm"
+	svc := composeTypes.ServiceConfig{Name: name}
+	svc.CapAdd = []string{"CAP_CHOWN", "CAP_SETUID", "CAP_SETGID"}
+	//svc.CapDrop = []string{"ALL"}
+	//svc.Platform = "linux/amd64"
+	//svc.Restart = composeTypes.RestartPolicyUnlessStopped
+	//svc.ReadOnly = false
+	//svc.Environment => DB_HOST, DB_PORT // interactive => ADCM database host (required if not managed APDG), ADCM database port (default: 5432)
+	//svc.StopSignal
+	//svc.DependsOn
+	//svc.Labels = map[string]string{compose.ADAppTypeLabelKey: name}
+	//svc.Image // interactive => ADCM image (default: hub.arenadata.io/adcm/adcm), ADCM image tag (default: 2.5.0)
+	//svc.Volumes
+	//svc.PullPolicy
+	//svc.Tmpfs
+	//svc.Hostname
+	//svc.HealthCheck
+	//svc.Ports // interactive => ADCM publish port (default:8000)
+	//svc.SecurityOpt
+	prj.Services[name] = svc
+}
+
+func adpg(prj *composeTypes.Project) {
+	const name = "adpg"
+	svc := composeTypes.ServiceConfig{Name: name}
+	//svc.CapAdd
+	//svc.CapDrop = []string{"ALL"}
+	//svc.Platform = "linux/amd64"
+	//svc.Restart = composeTypes.RestartPolicyUnlessStopped
+	//svc.ReadOnly = true
+	//svc.Environment
+	//svc.StopSignal
+	//svc.DependsOn
+	//svc.Labels = map[string]string{compose.ADAppTypeLabelKey: name}
+	//svc.Image // interactive
+	//svc.Volumes
+	//svc.PullPolicy
+	//svc.Tmpfs
+	//svc.Hostname
+	//svc.HealthCheck
+	//svc.Ports // interactive
+	//svc.SecurityOpt
+	prj.Services[name] = svc
+}
+
+func consul(prj *composeTypes.Project) {
+	const name = "consul"
+	svc := composeTypes.ServiceConfig{Name: name}
+	//svc.CapAdd
+	//svc.CapDrop = []string{"ALL"}
+	//svc.Platform = "linux/amd64"
+	//svc.Restart = composeTypes.RestartPolicyUnlessStopped
+	//svc.ReadOnly = true
+	//svc.Environment
+	//svc.StopSignal
+	//svc.DependsOn
+	//svc.Labels = map[string]string{compose.ADAppTypeLabelKey: name}
+	//svc.Image
+	//svc.Volumes
+	//svc.PullPolicy
+	//svc.Tmpfs
+	//svc.Hostname
+	//svc.HealthCheck
+	//svc.Ports
+	//svc.SecurityOpt
+	prj.Services[name] = svc
+}
+
+func vault(prj *composeTypes.Project) {
+	const name = "vault"
+	svc := composeTypes.ServiceConfig{Name: name}
+	//svc.CapAdd
+	//svc.CapDrop = []string{"ALL"}
+	//svc.Platform = "linux/amd64"
+	//svc.Restart = composeTypes.RestartPolicyUnlessStopped
+	//svc.ReadOnly = true
+	//svc.Environment
+	//svc.StopSignal
+	//svc.DependsOn
+	//svc.Labels = map[string]string{compose.ADAppTypeLabelKey: name}
+	//svc.Image
+	//svc.Volumes
+	//svc.PullPolicy
+	//svc.Tmpfs
+	//svc.Hostname
+	//svc.HealthCheck
+	//svc.Ports
+	//svc.SecurityOpt
+	prj.Services[name] = svc
 }
