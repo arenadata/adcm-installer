@@ -3,6 +3,8 @@
 ### Build
 ```shell
 make build
+# or
+docker run --rm -it -v $HOME/go/pkg/mod:/go/pkg/mod -v `pwd`:/app golang:1.24 /bin/bash -c 'cd /app && make build'
 ```
 
 ### Usage

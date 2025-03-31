@@ -3,6 +3,7 @@ package compose
 import (
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -220,6 +221,20 @@ func Hostname(svcName, hostname string) ModHelper {
 	}
 }
 
+func Image(svcName, image string) ModHelper {
+	return func(prj *composeTypes.Project) error {
+		svc, ok := prj.Services[svcName]
+		if !ok {
+			return fmt.Errorf("service %q not found", svcName)
+		}
+
+		svc.Image = image
+
+		prj.Services[svcName] = svc
+		return nil
+	}
+}
+
 func Labels(svcName string, labels map[string]string) ModHelper {
 	return func(prj *composeTypes.Project) error {
 		svc, ok := prj.Services[svcName]
@@ -309,15 +324,16 @@ func Platform(svcName, platform string) ModHelper {
 	}
 }
 
-func PublishPort(svcName string, publishPort string, targetPort uint16) ModHelper {
+func PublishPort(svcName string, publishPort, targetPort uint16) ModHelper {
 	return func(prj *composeTypes.Project) error {
 		svc, ok := prj.Services[svcName]
 		if !ok {
 			return fmt.Errorf("service %q not found", svcName)
 		}
 
+		publishPortString := strconv.Itoa(int(publishPort))
 		for _, svcPort := range svc.Ports {
-			if svcPort.Published == publishPort {
+			if svcPort.Published == publishPortString {
 				return nil
 			}
 		}
@@ -325,7 +341,7 @@ func PublishPort(svcName string, publishPort string, targetPort uint16) ModHelpe
 		svc.Ports = append(svc.Ports, composeTypes.ServicePortConfig{
 			Mode:      "ingress",
 			Target:    uint32(targetPort),
-			Published: publishPort,
+			Published: publishPortString,
 		})
 
 		prj.Services[svcName] = svc

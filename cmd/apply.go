@@ -62,6 +62,8 @@ func applyProject(cmd *cobra.Command, _ []string) {
 	}
 	fillADCMLabels(prj)
 
+	dryRunMode := getBool(cmd, "dry-run")
+
 	ageKey, err := getAgeKey(cmd, "age-key")
 	if err != nil {
 		logger.Fatal(err)
@@ -78,11 +80,23 @@ func applyProject(cmd *cobra.Command, _ []string) {
 		}
 
 		for k, v := range xSecrets.Data {
-			v, err = dec.DecryptValue(v)
-			if err != nil {
-				logger.Fatal(err)
+			if !dryRunMode {
+				v, err = dec.DecryptValue(v)
+				if err != nil {
+					logger.Fatal(err)
+				}
 			}
+
 			prj.Environment[k] = v
+		}
+	}
+
+	var adpgServiceName string
+	var hasManagedAdpg bool
+	for svcName, svc := range prj.Services {
+		if svc.Labels[compose.ADAppTypeLabelKey] == "adpg" {
+			adpgServiceName = svcName
+			hasManagedAdpg = true
 		}
 	}
 
@@ -103,6 +117,13 @@ func applyProject(cmd *cobra.Command, _ []string) {
 			helpers = append(helpers, compose.TmpFs(svcName, mnt))
 		}
 
+		if svcType == "adcm" && hasManagedAdpg {
+			helpers = append(helpers, compose.Environment(svcName,
+				compose.Env{Name: "DB_HOST", Value: &adpgServiceName},
+				compose.Env{Name: "DB_PORT", Value: utils.Ptr("5432")},
+			))
+		}
+
 		var serviceSecrets []compose.Secret
 		for _, sec := range svc.Secrets {
 			envKey, ok := mapFlagsToEnv[sec.Source]
@@ -120,6 +141,7 @@ func applyProject(cmd *cobra.Command, _ []string) {
 
 		helpers = append(helpers,
 			compose.Secrets(svcName, serviceSecrets...),
+			compose.Platform(svcName, "linux/amd64"),
 		)
 	}
 
@@ -127,7 +149,7 @@ func applyProject(cmd *cobra.Command, _ []string) {
 		logger.Fatal(err)
 	}
 
-	projectInit, err := newInitProject(prj)
+	projectInit, err := newInitProject(prj, hasManagedAdpg)
 	if err != nil {
 		logger.Fatal(err)
 	}
@@ -145,7 +167,7 @@ func applyProject(cmd *cobra.Command, _ []string) {
 		logger.Fatal(err)
 	}
 
-	if getBool(cmd, "dry-run") {
+	if dryRunMode {
 		closer, err := setOutput(cmd)
 		if err != nil {
 			logger.Fatal(err)
@@ -156,11 +178,7 @@ func applyProject(cmd *cobra.Command, _ []string) {
 		defer func() { _ = enc.Close() }()
 
 		enc.SetIndent(2)
-
-		removeEnv(projectInit)
 		_ = enc.Encode(projectInit)
-
-		removeEnv(prj)
 		_ = enc.Encode(prj)
 		return
 	}
@@ -324,14 +342,7 @@ func WithEnvFiles(file ...string) cli.ProjectOptionsFn {
 	}
 }
 
-func newInitProject(project *composeTypes.Project) (*composeTypes.Project, error) {
-	var hasManagedAdpg bool
-	for _, svc := range project.Services {
-		if svc.Labels[compose.ADAppTypeLabelKey] == "adpg" {
-			hasManagedAdpg = true
-		}
-	}
-
+func newInitProject(project *composeTypes.Project, hasManagedAdpg bool) (*composeTypes.Project, error) {
 	helpers := compose.NewModHelpers()
 	projectInit := &composeTypes.Project{
 		Name:        project.Name,
@@ -484,13 +495,4 @@ func fillADCMLabels(project *composeTypes.Project) {
 
 		project.Services[name] = s
 	}
-}
-
-func removeEnv(prj *composeTypes.Project) {
-	env := prj.Environment
-	for k := range env {
-		env[k] = ""
-	}
-
-	prj.Environment = env
 }
