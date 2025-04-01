@@ -244,7 +244,7 @@ func initProject(cmd *cobra.Command, args []string) {
 
 			wrap(&image, "ADPG image", image, false, false)
 			wrap(&tag, "ADPG image tag", tag, false, false)
-			wrap(&port, "ADCM publish port", "0", false, false)
+			wrap(&port, "ADPG publish port", "0", false, false)
 		}
 
 		if len(postgresPassword) == 0 {
