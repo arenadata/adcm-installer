@@ -9,17 +9,11 @@ build: assets/busybox.tar.gz
 test:
 	@go test -v ./...
 
-bin/skopeo:
-	@echo "Clone sources and Build Skopeo..."
-	@git clone https://github.com/containers/skopeo
-	@cd skopeo && make bin/skopeo
-	@mv skopeo/bin .
-
-assets/busybox.tar: bin/skopeo
+assets/busybox.tar:
 	@echo "Download Busybox image..."
 	@mkdir -p assets
-	@skopeo copy --override-os=linux --override-arch=amd64 docker://docker.io/library/busybox:stable-uclibc docker-archive:$@:busybox:stable-uclibc
+	@go run hack/busybox-image.go $@
 
 assets/busybox.tar.gz: assets/busybox.tar
-	@echo "Gzip Busybox..."
+	@echo "Gzip Busybox image..."
 	@gzip assets/busybox.tar -c > assets/busybox.tar.gz
