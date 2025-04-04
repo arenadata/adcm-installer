@@ -92,11 +92,9 @@ func applyProject(cmd *cobra.Command, _ []string) {
 	}
 
 	var adpgServiceName string
-	var hasManagedAdpg bool
 	for svcName, svc := range prj.Services {
 		if svc.Labels[compose.ADAppTypeLabelKey] == "adpg" {
 			adpgServiceName = svcName
-			hasManagedAdpg = true
 		}
 	}
 
@@ -117,11 +115,21 @@ func applyProject(cmd *cobra.Command, _ []string) {
 			helpers = append(helpers, compose.TmpFs(svcName, mnt))
 		}
 
-		if svcType == "adcm" && hasManagedAdpg {
-			helpers = append(helpers, compose.Environment(svcName,
-				compose.Env{Name: "DB_HOST", Value: &adpgServiceName},
-				compose.Env{Name: "DB_PORT", Value: utils.Ptr("5432")},
-			))
+		var sslOpts *types.DbSSLOptions
+		if svcType == "adcm" {
+			if len(adpgServiceName) > 0 {
+				helpers = append(helpers,
+					compose.Environment(svcName,
+						compose.Env{Name: "DB_HOST", Value: &adpgServiceName},
+						compose.Env{Name: "DB_PORT", Value: utils.Ptr("5432")},
+					))
+			}
+
+			if optStr, ok := svc.Environment[pgSslOptEnvKey]; ok {
+				if err = json.Unmarshal([]byte(*optStr), &sslOpts); err != nil {
+					logger.Fatal(err)
+				}
+			}
 		}
 
 		var serviceSecrets []compose.Secret
@@ -131,12 +139,29 @@ func applyProject(cmd *cobra.Command, _ []string) {
 				// TODO
 			}
 
+			if sslOpts != nil {
+				if sec.Source == pgSslCaKey {
+					sslOpts.SSLRootCert = sec.Target
+				} else if sec.Source == pgSslCertKey {
+					sslOpts.SSLCert = sec.Target
+				} else if sec.Source == pgSslKeyKey {
+					sslOpts.SSLKey = sec.Target
+				}
+			}
+
 			serviceSecrets = append(serviceSecrets, compose.Secret{
 				Source: sec.Source,
 				EnvKey: envKey,
 				Value:  prj.Environment[sec.Source],
-				ENV:    true,
+				ENV:    len(envKey) > 0,
 			})
+		}
+
+		if sslOpts != nil {
+			optStr := sslOpts.String()
+			helpers = append(helpers,
+				compose.Environment(svcName, compose.Env{Name: pgSslOptEnvKey, Value: &optStr}),
+			)
 		}
 
 		helpers = append(helpers,
@@ -149,7 +174,7 @@ func applyProject(cmd *cobra.Command, _ []string) {
 		logger.Fatal(err)
 	}
 
-	projectInit, err := newInitProject(prj, hasManagedAdpg)
+	projectInit, err := newInitProject(prj, len(adpgServiceName) > 0)
 	if err != nil {
 		logger.Fatal(err)
 	}

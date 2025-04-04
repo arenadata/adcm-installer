@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"github.com/arenadata/adcm-installer/pkg/types"
 	"io"
 	"os"
 	"path/filepath"
@@ -27,6 +28,11 @@ const (
 	svcNameAdpg   = "adpg"
 	svcNameConsul = "consul"
 	svcNameVault  = "vault"
+
+	pgSslCaKey     = "adcm-pg-ssl-ca"
+	pgSslCertKey   = "adcm-pg-ssl-cert"
+	pgSslKeyKey    = "adcm-pg-ssl-key"
+	pgSslOptEnvKey = "DB_OPTIONS"
 )
 
 type xsecrets struct {
@@ -162,6 +168,13 @@ func initProject(cmd *cobra.Command, args []string) {
 			}
 
 			if sslMode != postgresSSLMode {
+				sslOpts := types.DbSSLOptions{SSLMode: sslMode}
+
+				optStr := sslOpts.String()
+				helpers = append(helpers, compose.Environment(svcNameAdcm,
+					compose.Env{Name: pgSslOptEnvKey, Value: &optStr},
+				))
+
 				var sslCa, sslCert, sslKey string
 				wrap(&sslCa, "ADCM database SSL CA file path:", "", false, false)
 				wrap(&sslCert, "ADCM database SSL certificate file path:", "", false, false)
@@ -172,21 +185,21 @@ func initProject(cmd *cobra.Command, args []string) {
 					if err != nil {
 						logger.Fatal(err)
 					}
-					xsecretsData["adcm-pg-ssl-ca"] = string(b)
+					xsecretsData[pgSslCaKey] = string(b)
 				}
 				if len(sslCert) > 0 {
 					b, err := os.ReadFile(sslCert)
 					if err != nil {
 						logger.Fatal(err)
 					}
-					xsecretsData["adcm-pg-ssl-cert"] = string(b)
+					xsecretsData[pgSslCertKey] = string(b)
 				}
 				if len(sslKey) > 0 {
 					b, err := os.ReadFile(sslKey)
 					if err != nil {
 						logger.Fatal(err)
 					}
-					xsecretsData["adcm-pg-ssl-key"] = string(b)
+					xsecretsData[pgSslKeyKey] = string(b)
 				}
 			}
 		}

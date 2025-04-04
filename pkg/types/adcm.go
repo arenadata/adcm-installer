@@ -2,10 +2,6 @@ package types
 
 import "encoding/json"
 
-const (
-	sslCertPath = "/"
-)
-
 type DbSSLOptions struct {
 	SSLMode     string `json:"sslmode"`
 	SSLCert     string `json:"sslcert"`

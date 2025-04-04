@@ -298,11 +298,14 @@ func Secrets(svcName string, secrets ...Secret) ModHelper {
 				prj.Environment[sec.Source] = sec.Value
 			}
 
-			if sec.ENV {
-				svc.Environment[sec.EnvKey] = &sec.Value
-			}
+			if len(sec.EnvKey) > 0 {
+				svc.Environment[sec.EnvKey+"_FILE"] = &path
 
-			svc.Environment[sec.EnvKey+"_FILE"] = &path
+				if sec.ENV {
+					svc.Environment[sec.EnvKey] = &sec.Value
+				}
+
+			}
 		}
 
 		prj.Services[svcName] = svc
