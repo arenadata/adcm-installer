@@ -14,7 +14,7 @@ import (
 
 var componentsUpdateCmd = &cobra.Command{
 	Aliases: []string{"u"},
-	Use:     "updates",
+	Use:     "update",
 	Short:   "Ensure that the latest version of all installed components is installed",
 	Run: func(cmd *cobra.Command, args []string) {
 		logger := log.WithField("command", "components-update")

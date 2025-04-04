@@ -2,14 +2,13 @@ package assets
 
 import (
 	"bytes"
-	"compress/gzip"
 	"context"
 	_ "embed"
 
 	"github.com/docker/docker/client"
 )
 
-//go:embed busybox.tar.gz
+//go:embed busybox.tar
 var busybox []byte
 
 const ImageName = "busybox:stable-uclibc"
@@ -21,13 +20,7 @@ func LoadBusybox(ctx context.Context) error {
 	}
 	defer cli.Close()
 
-	r, err := gzip.NewReader(bytes.NewBuffer(busybox))
-	if err != nil {
-		return err
-	}
-	defer r.Close()
-
-	resp, err := cli.ImageLoad(ctx, r, true)
+	resp, err := cli.ImageLoad(ctx, bytes.NewBuffer(busybox), true)
 	if err != nil {
 		return err
 	}

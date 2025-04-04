@@ -1,19 +1,27 @@
 VERSION ?= $(shell git describe --tags --abbrev=0 2>/dev/null || echo "0.0.0-dev" | tr -d '\n')
+GOOS ?= $(shell go env GOOS)
+GOARCH ?= $(shell go env GOARCH)
+CGO_ENABLED := 0
 
-.PHONY: build test
+ifeq ($(GOOS),darwin)
+	CGO_ENABLED = 1
+endif
 
-build: assets/busybox.tar.gz
+.PHONY: build linux in-docker test
+
+build: assets/busybox.tar
 	@echo "Build adcm-installer"
-	@go build -o bin/adi -trimpath -ldflags "-X github.com/arenadata/adcm-installer/cmd.version=$(VERSION) -w -s" main.go
+	CGO_ENABLED=$(CGO_ENABLED) GOOS=$(GOOS) GOARCH=$(GOARCH) go build -o bin/adi -trimpath -ldflags "-X github.com/arenadata/adcm-installer/cmd.version=$(VERSION) -w -s" main.go
+
+linux:
+	$(MAKE) GOOS=linux GOARCH=amd64 build
+
+in-docker:
+	@docker run -w /app --rm -it -v $(HOME)/go/pkg/mod:/go/pkg/mod -v `pwd`:/app golang:1.24 make linux
 
 test:
 	@go test -v ./...
 
 assets/busybox.tar:
 	@echo "Download Busybox image..."
-	@mkdir -p assets
-	@go run hack/busybox-image.go $@
-
-assets/busybox.tar.gz: assets/busybox.tar
-	@echo "Gzip Busybox image..."
-	@gzip assets/busybox.tar -c > assets/busybox.tar.gz
+	@go run hack/busybox-image.go "busybox:stable-uclibc" $@

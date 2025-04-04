@@ -1,13 +1,11 @@
 package cmd
 
 import (
-	"net/http"
-	"net/url"
-
 	"github.com/arenadata/adcm-installer/pkg/compose"
+	"github.com/arenadata/adcm-installer/pkg/registry-client"
 
 	"github.com/blang/semver/v4"
-	"github.com/heroku/docker-registry-client/registry"
+	"github.com/distribution/reference"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 )
@@ -26,25 +24,15 @@ func init() {
 func listVersions(cmd *cobra.Command, _ []string) {
 	logger := log.WithField("command", "adcm-versions")
 
-	u, err := url.Parse("https://" + compose.ADCMImage)
+	distributionRef, err := reference.ParseNormalizedNamed(compose.ADCMImage)
 	if err != nil {
 		logger.Fatal(err)
 	}
 
-	image := u.Path
-	u.Path = ""
-	registryHost := u.String()
+	domain := reference.Domain(distributionRef)
+	reg := client.NewRegistryClient(domain)
 
-	transport := registry.WrapTransport(http.DefaultTransport, registryHost, "", "")
-	reg := &registry.Registry{
-		URL: registryHost,
-		Client: &http.Client{
-			Transport: transport,
-		},
-		Logf: logger.Debugf,
-	}
-
-	tags, err := reg.Tags(image)
+	tags, err := reg.Tags(reference.Path(distributionRef))
 	if err != nil {
 		logger.Fatal(err)
 	}
