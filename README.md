@@ -1,10 +1,16 @@
 # ADCM Installer
 
 ### Build
+build binary file for current OS/Arch. **This is the only way to build under MacOS**
 ```shell
 make build
+```
+
+build binary file for linux amd64
+```shell
+make linux
 # or
-docker run --rm -it -v $HOME/go/pkg/mod:/go/pkg/mod -v `pwd`:/app golang:1.24 /bin/bash -c 'cd /app && make build'
+make in-docker
 ```
 
 ### Usage
