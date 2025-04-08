@@ -141,22 +141,27 @@ func applyProject(cmd *cobra.Command, _ []string) {
 				// TODO
 			}
 
-			if sslOpts != nil {
-				if sec.Source == pgSslCaKey {
-					sslOpts.SSLRootCert = sec.Target
-				} else if sec.Source == pgSslCertKey {
-					sslOpts.SSLCert = sec.Target
-				} else if sec.Source == pgSslKeyKey {
-					sslOpts.SSLKey = sec.Target
-				}
-			}
-
-			serviceSecrets = append(serviceSecrets, compose.Secret{
+			composeSec := compose.Secret{
 				Source: sec.Source,
 				EnvKey: envKey,
 				Value:  prj.Environment[sec.Source],
 				ENV:    len(envKey) > 0,
-			})
+			}
+			var mode uint32 = 0o400
+			if sslOpts != nil {
+				if sec.Source == pgSslCaKey {
+					composeSec.FileMode = &mode
+					sslOpts.SSLRootCert = sec.Target
+				} else if sec.Source == pgSslCertKey {
+					composeSec.FileMode = &mode
+					sslOpts.SSLCert = sec.Target
+				} else if sec.Source == pgSslKeyKey {
+					composeSec.FileMode = &mode
+					sslOpts.SSLKey = sec.Target
+				}
+			}
+
+			serviceSecrets = append(serviceSecrets, composeSec)
 		}
 
 		if sslOpts != nil {

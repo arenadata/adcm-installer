@@ -255,11 +255,12 @@ func Labels(svcName string, labels map[string]string) ModHelper {
 }
 
 type Secret struct {
-	Source  string
-	EnvKey  string
-	Value   string
-	ENV     bool
-	Rewrite bool
+	Source   string
+	EnvKey   string
+	Value    string
+	ENV      bool
+	Rewrite  bool
+	FileMode *uint32
 }
 
 func Secrets(svcName string, secrets ...Secret) ModHelper {
@@ -290,6 +291,7 @@ func Secrets(svcName string, secrets ...Secret) ModHelper {
 				svc.Secrets = append(svc.Secrets, composeTypes.ServiceSecretConfig{
 					Source: sec.Source,
 					Target: path,
+					Mode:   sec.FileMode,
 				})
 			}
 
