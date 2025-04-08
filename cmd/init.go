@@ -228,7 +228,16 @@ func initProject(cmd *cobra.Command, args []string) {
 		compose.Image(svcNameAdcm, adcmImage+":"+adcmTag),
 	)
 	if adcmPublishPort > 0 {
+		var adcmUrl string
+		if hostIp := utils.HostIp(); len(hostIp) > 0 {
+			adcmUrl = fmt.Sprintf("http://%s:%d", hostIp, adcmPublishPort)
+		}
+		if interactive {
+			wrap(&adcmUrl, "ADCM url", adcmUrl, false, false)
+		}
+
 		helpers = append(helpers,
+			compose.Environment(svcNameAdcm, compose.Env{Name: "ADCM_URL", Value: &adcmUrl}),
 			compose.PublishPort(svcNameAdcm, adcmPublishPort, services[svcNameAdcm].port),
 		)
 	}

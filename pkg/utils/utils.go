@@ -3,6 +3,7 @@ package utils
 import (
 	"fmt"
 	"math/rand/v2"
+	"net"
 	"os"
 )
 
@@ -40,4 +41,14 @@ func In(a []string, s string) bool {
 		}
 	}
 	return false
+}
+
+func HostIp() string {
+	conn, err := net.Dial("udp", "8.8.8.8:80")
+	if err != nil {
+		return ""
+	}
+	defer conn.Close()
+	localAddr := conn.LocalAddr().(*net.UDPAddr)
+	return localAddr.IP.String()
 }
