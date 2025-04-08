@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"github.com/arenadata/adcm-installer/pkg/types"
 	"io"
 	"os"
 	"path/filepath"
@@ -12,6 +11,7 @@ import (
 	"time"
 
 	"github.com/arenadata/adcm-installer/pkg/compose"
+	"github.com/arenadata/adcm-installer/pkg/types"
 	"github.com/arenadata/adcm-installer/pkg/utils"
 
 	"github.com/AlecAivazis/survey/v2"

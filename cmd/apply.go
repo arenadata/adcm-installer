@@ -91,9 +91,11 @@ func applyProject(cmd *cobra.Command, _ []string) {
 		}
 	}
 
+	var hasManagedServices bool
 	var adpgServiceName string
 	for svcName, svc := range prj.Services {
 		if svc.Labels[compose.ADAppTypeLabelKey] == "adpg" {
+			hasManagedServices = true
 			adpgServiceName = svcName
 		}
 	}
@@ -174,11 +176,14 @@ func applyProject(cmd *cobra.Command, _ []string) {
 		logger.Fatal(err)
 	}
 
-	projectInit, err := newInitProject(prj, len(adpgServiceName) > 0)
-	if err != nil {
-		logger.Fatal(err)
+	var projectInit *composeTypes.Project
+	if hasManagedServices {
+		projectInit, err = newInitProject(prj)
+		if err != nil {
+			logger.Fatal(err)
+		}
+		fillADCMLabels(projectInit)
 	}
-	fillADCMLabels(projectInit)
 
 	// compose.Up(projectInit)
 	// chown/init
@@ -203,8 +208,10 @@ func applyProject(cmd *cobra.Command, _ []string) {
 		defer func() { _ = enc.Close() }()
 
 		enc.SetIndent(2)
-		_ = enc.Encode(projectInit)
-		_ = enc.Encode(projectInit.Environment)
+		if projectInit != nil {
+			_ = enc.Encode(projectInit)
+			_ = enc.Encode(projectInit.Environment)
+		}
 		_ = enc.Encode(prj)
 		_ = enc.Encode(prj.Environment)
 		return
@@ -215,12 +222,14 @@ func applyProject(cmd *cobra.Command, _ []string) {
 		logger.Fatal(err)
 	}
 
-	if err = comp.Up(cmd.Context(), projectInit); err != nil {
-		logger.Fatal(err)
-	}
+	if projectInit != nil {
+		if err = comp.Up(cmd.Context(), projectInit); err != nil {
+			logger.Fatal(err)
+		}
 
-	if err = comp.Down(cmd.Context(), projectInit.Name, false); err != nil {
-		logger.Fatal(err)
+		if err = comp.Down(cmd.Context(), projectInit.Name, false); err != nil {
+			logger.Fatal(err)
+		}
 	}
 
 	if err = comp.Up(cmd.Context(), prj); err != nil {
@@ -369,7 +378,7 @@ func WithEnvFiles(file ...string) cli.ProjectOptionsFn {
 	}
 }
 
-func newInitProject(project *composeTypes.Project, hasManagedAdpg bool) (*composeTypes.Project, error) {
+func newInitProject(project *composeTypes.Project) (*composeTypes.Project, error) {
 	helpers := compose.NewModHelpers()
 	projectInit := &composeTypes.Project{
 		Name:        project.Name,
@@ -403,10 +412,6 @@ func newInitProject(project *composeTypes.Project, hasManagedAdpg bool) (*compos
 				},
 				Volumes: svc.Volumes,
 			}
-		}
-
-		if !hasManagedAdpg {
-			continue
 		}
 
 		switch svcType {
