@@ -147,15 +147,14 @@ func applyProject(cmd *cobra.Command, _ []string) {
 				Value:  prj.Environment[sec.Source],
 				ENV:    len(envKey) > 0,
 			}
-			var mode uint32 = 0o400
+
 			if sslOpts != nil {
 				if sec.Source == pgSslCaKey {
-					composeSec.FileMode = &mode
 					sslOpts.SSLRootCert = sec.Target
 				} else if sec.Source == pgSslCertKey {
-					composeSec.FileMode = &mode
 					sslOpts.SSLCert = sec.Target
 				} else if sec.Source == pgSslKeyKey {
+					var mode uint32 = 0o400
 					composeSec.FileMode = &mode
 					sslOpts.SSLKey = sec.Target
 				}

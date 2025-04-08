@@ -265,13 +265,13 @@ type Secret struct {
 
 func Secrets(svcName string, secrets ...Secret) ModHelper {
 	return func(prj *composeTypes.Project) error {
-		hasSource := func(sec []composeTypes.ServiceSecretConfig, s string) bool {
-			for _, svcSecret := range sec {
-				if svcSecret.Source == s {
-					return true
+		hasSource := func(sec []composeTypes.ServiceSecretConfig, s Secret) (int, bool) {
+			for n, svcSecret := range sec {
+				if svcSecret.Source == s.Source {
+					return n, true
 				}
 			}
-			return false
+			return 0, false
 		}
 		svc, ok := prj.Services[svcName]
 		if !ok {
@@ -287,12 +287,15 @@ func Secrets(svcName string, secrets ...Secret) ModHelper {
 
 		for _, sec := range secrets {
 			path := filepath.Join(SecretsPath, sec.Source)
-			if !hasSource(svc.Secrets, sec.Source) {
+			n, hasSrc := hasSource(svc.Secrets, sec)
+			if !hasSrc {
 				svc.Secrets = append(svc.Secrets, composeTypes.ServiceSecretConfig{
 					Source: sec.Source,
 					Target: path,
 					Mode:   sec.FileMode,
 				})
+			} else if sec.FileMode != nil {
+				svc.Secrets[n].Mode = sec.FileMode
 			}
 
 			prj.Secrets[sec.Source] = composeTypes.SecretConfig{Environment: sec.Source}
