@@ -230,6 +230,7 @@ func initProject(cmd *cobra.Command, args []string) {
 	if adcmPublishPort > 0 {
 		var adcmUrl string
 		if hostIp := utils.HostIp(); len(hostIp) > 0 {
+			// TODO: automatically switch http to https
 			adcmUrl = fmt.Sprintf("http://%s:%d", hostIp, adcmPublishPort)
 		}
 		if interactive {
