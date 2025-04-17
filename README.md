@@ -17,7 +17,7 @@ make in-docker
 Configure project (persistent installation)
 ```shell
 # see `adi init --help` command
-adi init adcm-project --adcm --pg -i
+adi init adcm-project --adpg -i
 # ...
 adi apply
 ```
