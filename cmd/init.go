@@ -2,9 +2,9 @@ package cmd
 
 import (
 	"fmt"
-	"github.com/gosimple/slug"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -17,6 +17,7 @@ import (
 
 	"github.com/AlecAivazis/survey/v2"
 	composeTypes "github.com/compose-spec/compose-go/v2/types"
+	"github.com/gosimple/slug"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
@@ -437,7 +438,10 @@ func initProject(cmd *cobra.Command, args []string) {
 		keyParts := strings.SplitN(k, "-", 2)
 		svcName := keyParts[0]
 		if svc, ok := prj.Services[svcName]; ok {
-			svc.Secrets = append(svc.Secrets, composeTypes.ServiceSecretConfig{Source: k})
+			svc.Secrets = append(svc.Secrets, composeTypes.ServiceSecretConfig{
+				Source: k,
+				Target: path.Join(compose.SecretsPath, k),
+			})
 			prj.Services[svcName] = svc
 		}
 	}

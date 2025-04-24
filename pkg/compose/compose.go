@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/docker/compose/v2/cmd/formatter"
+	"github.com/docker/docker/api/types/system"
 	"sort"
 	"strings"
 	"time"
@@ -171,6 +172,10 @@ func (c Compose) ContainerRemove(ctx context.Context, containerName string) erro
 	return c.cli.Client().ContainerRemove(ctx, containerName, containerTypes.RemoveOptions{
 		Force: true,
 	})
+}
+
+func (c Compose) Info(ctx context.Context) (system.Info, error) {
+	return c.cli.Client().Info(ctx)
 }
 
 func hasProjectLabelFilter() filters.KeyValuePair {

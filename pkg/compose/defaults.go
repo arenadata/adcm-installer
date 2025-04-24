@@ -7,7 +7,7 @@ const (
 	ADLabel           = "app.arenadata.io"
 	ADAppTypeLabelKey = ADLabel + "/type"
 
-	SecretsPath = "/run/secrets"
+	SecretsPath = "/run/csecrets"
 
 	ADCMImage   = "hub.arenadata.io/adcm/adcm"
 	ADPGImage   = "hub.arenadata.io/adcm/postgres"

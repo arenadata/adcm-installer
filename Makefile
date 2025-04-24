@@ -15,7 +15,7 @@ build: assets/busybox.tar
 	@CGO_ENABLED=$(CGO_ENABLED) GOOS=$(GOOS) GOARCH=$(GOARCH) go build -o bin/adi -trimpath -ldflags "-X github.com/arenadata/adcm-installer/cmd.version=$(VERSION) -w -s" main.go
 
 linux:
-	$(MAKE) GOOS=linux GOARCH=amd64 build
+	@$(MAKE) GOOS=linux GOARCH=amd64 build
 
 in-docker:
 	@docker run -w /app --rm -it -v $(HOME)/go/pkg/mod:/go/pkg/mod -v `pwd`:/app golang:1.24 make linux

@@ -2,7 +2,7 @@ package compose
 
 import (
 	"fmt"
-	"path/filepath"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -286,12 +286,12 @@ func Secrets(svcName string, secrets ...Secret) ModHelper {
 		}
 
 		for _, sec := range secrets {
-			path := filepath.Join(SecretsPath, sec.Source)
+			filepath := path.Join(SecretsPath, sec.Source)
 			n, hasSrc := hasSource(svc.Secrets, sec)
 			if !hasSrc {
 				svc.Secrets = append(svc.Secrets, composeTypes.ServiceSecretConfig{
 					Source: sec.Source,
-					Target: path,
+					Target: filepath,
 					Mode:   sec.FileMode,
 				})
 			} else if sec.FileMode != nil {
@@ -304,7 +304,7 @@ func Secrets(svcName string, secrets ...Secret) ModHelper {
 			}
 
 			if len(sec.EnvKey) > 0 {
-				svc.Environment[sec.EnvKey+"_FILE"] = &path
+				svc.Environment[sec.EnvKey+"_FILE"] = &filepath
 
 				if sec.ENV {
 					svc.Environment[sec.EnvKey] = &sec.Value

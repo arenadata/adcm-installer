@@ -49,6 +49,8 @@ func init() {
 	configFileFlags(applyCmd)
 
 	applyCmd.Flags().Bool("dry-run", false, "Simulate an apply command and generate docker-compose.yaml without secrets")
+	applyCmd.Flags().Bool("pg-debug", false, "Enable debugging adpg-init container")
+	applyCmd.MarkFlagsMutuallyExclusive("dry-run", "pg-debug")
 	applyCmd.Flags().StringP("output", "o", "", "Output filename")
 }
 
@@ -100,20 +102,35 @@ func applyProject(cmd *cobra.Command, _ []string) {
 		}
 	}
 
+	comp, err := compose.NewComposeService()
+	if err != nil {
+		logger.Fatal(err)
+	}
+
+	criInfo, err := comp.Info(cmd.Context())
+	if err != nil {
+		logger.Fatal(err)
+	}
+
 	helpers := compose.NewModHelpers()
 	for svcName, svc := range prj.Services {
 		svcType := svc.Labels[compose.ADAppTypeLabelKey]
 		if svcType == "adpg" && svc.ReadOnly {
-			uid, gid := "0", "0"
-			if len(svc.User) > 0 {
-				uidGid := strings.Split(svc.User, ":")
-				uid = uidGid[0]
-				if len(uidGid) > 1 {
-					gid = uidGid[1]
+			mountOpt := "U"
+			if criInfo.OperatingSystem != "centos" {
+				uid, gid := "0", "0"
+				if len(svc.User) > 0 {
+					uidGid := strings.Split(svc.User, ":")
+					uid = uidGid[0]
+					if len(uidGid) > 1 {
+						gid = uidGid[1]
+					}
 				}
+
+				mountOpt = fmt.Sprintf("uid=%s,gid=%s", uid, gid)
 			}
 
-			mnt := fmt.Sprintf("/var/run/postgresql:uid=%s,gid=%s", uid, gid)
+			mnt := fmt.Sprintf("/var/run/postgresql:%s", mountOpt)
 			helpers = append(helpers, compose.TmpFs(svcName, mnt))
 		}
 
@@ -180,9 +197,10 @@ func applyProject(cmd *cobra.Command, _ []string) {
 		logger.Fatal(err)
 	}
 
+	pgDebug := getBool(cmd, "pg-debug")
 	var projectInit *composeTypes.Project
 	if hasManagedServices {
-		projectInit, err = newInitProject(prj)
+		projectInit, err = newInitProject(prj, pgDebug)
 		if err != nil {
 			logger.Fatal(err)
 		}
@@ -221,14 +239,13 @@ func applyProject(cmd *cobra.Command, _ []string) {
 		return
 	}
 
-	comp, err := compose.NewComposeService()
-	if err != nil {
-		logger.Fatal(err)
-	}
-
 	if projectInit != nil {
 		if err = comp.Up(cmd.Context(), projectInit); err != nil {
 			logger.Fatal(err)
+		}
+
+		if pgDebug {
+			return
 		}
 
 		if err = comp.Down(cmd.Context(), projectInit.Name, false); err != nil {
@@ -382,7 +399,7 @@ func WithEnvFiles(file ...string) cli.ProjectOptionsFn {
 	}
 }
 
-func newInitProject(project *composeTypes.Project) (*composeTypes.Project, error) {
+func newInitProject(project *composeTypes.Project, pgDebug bool) (*composeTypes.Project, error) {
 	helpers := compose.NewModHelpers()
 	projectInit := &composeTypes.Project{
 		Name:        project.Name,
@@ -430,23 +447,28 @@ func newInitProject(project *composeTypes.Project) (*composeTypes.Project, error
 			}
 		case "adpg":
 			adpgInitServiceName = "init-" + svcName
-			projectInit.Services[adpgInitServiceName] = composeTypes.ServiceConfig{
+			svcConf := composeTypes.ServiceConfig{
 				User:    svc.User,
 				Image:   svc.Image,
 				Command: []string{"initdb"},
 				Volumes: svc.Volumes,
 				Secrets: svc.Secrets,
 				Environment: composeTypes.MappingWithEquals{
-					"PG_ENTRYPOINT_DEBUG": utils.Ptr("true"),
+					"PG_ENTRYPOINT_LOG_DEBUG": utils.Ptr("true"),
 				},
 			}
+			if pgDebug {
+				svcConf.Environment["PG_ENTRYPOINT_INIT_DEBUG"] = utils.Ptr("true")
+			}
+			projectInit.Services[adpgInitServiceName] = svcConf
+
 			helpers = append(helpers, compose.Secrets(adpgInitServiceName, compose.Secret{
 				Source: "adpg-password",
 				EnvKey: "POSTGRES_PASSWORD",
 				ENV:    false,
 			}))
 
-			if len(chownServiceName) > 0 {
+			if len(chownServiceName) > 0 && !pgDebug {
 				helpers = append(helpers,
 					compose.DependsOn(adpgInitServiceName,
 						compose.Depended{
