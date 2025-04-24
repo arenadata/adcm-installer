@@ -91,6 +91,7 @@ var (
 		Run:     initProject,
 	}
 
+	// TODO: merge with initConfigDefaults
 	services = map[string]service{
 		svcNameAdcm:   {name: "ADCM", image: compose.ADCMImage, tag: "2.6.0", port: 8000, mounts: []string{"/adcm/data"}},
 		svcNameAdpg:   {name: "ADPG", image: compose.ADPGImage, tag: "v16.3.1", port: 5432, mounts: []string{"/data"}},
@@ -631,7 +632,7 @@ func initConfigDefaults(config *initConfig) {
 		config.ADPGImage = compose.ADPGImage
 	}
 	if len(config.ADPGTag) == 0 {
-		config.ADPGTag = "16.4"
+		config.ADPGTag = "v16.3.1"
 	}
 
 	if len(config.ConsulImage) == 0 {
