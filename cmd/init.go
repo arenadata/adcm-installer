@@ -93,7 +93,7 @@ var (
 
 	services = map[string]service{
 		svcNameAdcm:   {name: "ADCM", image: compose.ADCMImage, tag: "2.6.0", port: 8000, mounts: []string{"/adcm/data"}},
-		svcNameAdpg:   {name: "ADPG", image: compose.ADPGImage, tag: "16.4", port: 5432, mounts: []string{"/data"}},
+		svcNameAdpg:   {name: "ADPG", image: compose.ADPGImage, tag: "v16.3.1", port: 5432, mounts: []string{"/data"}},
 		svcNameVault:  {name: "Vault", image: compose.VaultImage, tag: "2.2.0", port: 8200, mounts: []string{"/openbao/file", "/openbao/logs"}},
 		svcNameConsul: {name: "Consul", image: compose.ConsulImage, tag: "v0.0.0", port: 8500, mounts: []string{"/data"}},
 	}
