@@ -172,7 +172,7 @@ func applyProject(cmd *cobra.Command, _ []string) {
 
 		helpers = append(helpers,
 			compose.Secrets(svcName, serviceSecrets...),
-			compose.Platform(svcName, "linux/amd64"),
+			compose.Platform(svcName, compose.DefaultPlatform),
 		)
 	}
 

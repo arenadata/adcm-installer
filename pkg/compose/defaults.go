@@ -10,7 +10,7 @@ const (
 	SecretsPath = "/run/secrets"
 
 	ADCMImage   = "hub.arenadata.io/adcm/adcm"
-	ADPGImage   = "mybackspace/adpg"
+	ADPGImage   = "hub.arenadata.io/adcm/postgres"
 	VaultImage  = "openbao/openbao"
-	ConsulImage = "mybackspace/yellow-pages"
+	ConsulImage = "hub.arenadata.io/adcm/consul"
 )

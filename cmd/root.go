@@ -10,10 +10,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const (
-	appFilename = "adcm.yaml"
-)
-
 var (
 	version = "1.0.0-dev"
 	RootCmd = rootCmd

@@ -35,6 +35,35 @@ const (
 	pgSslOptEnvKey = "DB_OPTIONS"
 )
 
+type initConfig struct {
+	ADCMDBHost        string `yaml:"adcm-db-host"`
+	ADCMDBPort        uint16 `yaml:"adcm-db-port"`
+	ADCMDBName        string `yaml:"adcm-db-name"`
+	ADCMDBUser        string `yaml:"adcm-db-user"`
+	ADCMDBPassword    string `yaml:"adcm-db-pass"`
+	ADCMDBSSLMode     string `yaml:"adcm-db-ssl-mode"`
+	ADCMDBSSLCaFile   string `yaml:"adcm-db-ssl-ca-file"`
+	ADCMDBSSLCertFile string `yaml:"adcm-db-ssl-cert-file"`
+	ADCMDBSSLKeyFile  string `yaml:"adcm-db-ssl-key-file"`
+	ADCMImage         string `yaml:"adcm-image"`
+	ADCMTag           string `yaml:"adcm-tag"`
+	ADCMPublishPort   uint16 `yaml:"adcm-publish-port"`
+	ADCMUrl           string `yaml:"adcm-url"`
+
+	ADPGPassword    string `yaml:"adpg-pass"`
+	ADPGImage       string `yaml:"adpg-image"`
+	ADPGTag         string `yaml:"adpg-tag"`
+	ADPGPublishPort uint16 `yaml:"adpg-publish-port"`
+
+	ConsulImage       string `yaml:"consul-image"`
+	ConsulTag         string `yaml:"consul-tag"`
+	ConsulPublishPort uint16 `yaml:"consul-publish-port"`
+
+	VaultImage       string `yaml:"vault-image"`
+	VaultTag         string `yaml:"vault-tag"`
+	VaultPublishPort uint16 `yaml:"vault-publish-port"`
+}
+
 type xsecrets struct {
 	AgeRecipient string            `yaml:"age_recipient" mapstructure:"age_recipient"`
 	Data         map[string]string `yaml:"data" mapstructure:"data"`
@@ -91,6 +120,8 @@ func init() {
 	f.BoolP("interactive", "i", false, "Interactive mode")
 
 	f.StringP("output", "o", "", "Output filename")
+	f.String("from-config", "", "Read variables from config file")
+	initCmd.MarkFlagsMutuallyExclusive("from-config", "interactive")
 }
 
 func initProject(cmd *cobra.Command, args []string) {
@@ -109,6 +140,17 @@ func initProject(cmd *cobra.Command, args []string) {
 			logger.Fatal(err)
 		}
 	}
+
+	var isValuesReadFromFile bool
+	config := &initConfig{}
+	if configFile, _ := cmd.Flags().GetString("from-config"); len(configFile) > 0 {
+		config, err = valuesFromConfigFile(configFile)
+		if err != nil {
+			logger.Fatal(err)
+		}
+		isValuesReadFromFile = true
+	}
+	initConfigDefaults(config)
 
 	interactive := getBool(cmd, "interactive")
 	managedADPG := getBool(cmd, svcNameAdpg)
@@ -137,109 +179,103 @@ func initProject(cmd *cobra.Command, args []string) {
 
 	xsecretsData := map[string]string{}
 
-	dbName := "adcm"
-	dbUser := "adcm"
-	var dbPass string
-	if !managedADPG || interactive {
+	if !isValuesReadFromFile && (!managedADPG || interactive) {
 		if !managedADPG {
-			var dbHost string
-			var dbPort uint16
-			dbPortDefault := strconv.Itoa(int(services[svcNameAdpg].port))
-			wrap(&dbHost, "ADCM database host:", "", true, false)
-			wrap(&dbPort, "ADCM database port:", dbPortDefault, false, false)
-
-			portStr := strconv.Itoa(int(dbPort))
-			helpers = append(helpers, compose.Environment(svcNameAdcm,
-				compose.Env{Name: "DB_HOST", Value: &dbHost},
-				compose.Env{Name: "DB_PORT", Value: &portStr},
-			))
+			portStr := strconv.Itoa(int(config.ADCMDBPort))
+			wrap(&config.ADCMDBHost, "ADCM database host:", "", true, false)
+			wrap(&config.ADCMDBPort, "ADCM database port:", portStr, false, false)
 		}
 
-		wrap(&dbName, "ADCM database name:", dbName, false, false)
-		wrap(&dbUser, "ADCM database user:", dbName, false, false)
+		wrap(&config.ADCMDBName, "ADCM database name:", config.ADCMDBName, false, false)
+		wrap(&config.ADCMDBUser, "ADCM database user:", config.ADCMDBUser, false, false)
 
 		if managedADPG {
-			wrap(&dbPass, "ADCM database password (random generated):", "", false, true)
+			wrap(&config.ADCMDBPassword, "ADCM database password (random generated):", "", false, true)
 		} else {
-			wrap(&dbPass, "ADCM database password:", "", true, true)
-			sslMode, err := selectValue("Select Postgres SSL mode:", postgresSSLMode, allowSSLModes)
+			wrap(&config.ADCMDBPassword, "ADCM database password:", "", true, true)
+			config.ADCMDBSSLMode, err = selectValue("Select Postgres SSL mode:", postgresSSLMode, allowSSLModes)
 			if err != nil {
 				logger.Fatal(err)
 			}
 
-			if sslMode != postgresSSLMode {
-				sslOpts := types.DbSSLOptions{SSLMode: sslMode}
-
-				optStr := sslOpts.String()
-				helpers = append(helpers, compose.Environment(svcNameAdcm,
-					compose.Env{Name: pgSslOptEnvKey, Value: &optStr},
-				))
-
-				var sslCa, sslCert, sslKey string
-				wrap(&sslCa, "ADCM database SSL CA file path:", "", false, false)
-				wrap(&sslCert, "ADCM database SSL certificate file path:", "", false, false)
-				wrap(&sslKey, "ADCM database SSL private key file path:", "", false, false)
-
-				if len(sslCa) > 0 {
-					b, err := os.ReadFile(sslCa)
-					if err != nil {
-						logger.Fatal(err)
-					}
-					xsecretsData[pgSslCaKey] = string(b)
-				}
-				if len(sslCert) > 0 {
-					b, err := os.ReadFile(sslCert)
-					if err != nil {
-						logger.Fatal(err)
-					}
-					xsecretsData[pgSslCertKey] = string(b)
-				}
-				if len(sslKey) > 0 {
-					b, err := os.ReadFile(sslKey)
-					if err != nil {
-						logger.Fatal(err)
-					}
-					xsecretsData[pgSslKeyKey] = string(b)
-				}
+			if config.ADCMDBSSLMode != postgresSSLMode {
+				wrap(&config.ADCMDBSSLCaFile, "ADCM database SSL CA file path:", "", false, false)
+				wrap(&config.ADCMDBSSLCertFile, "ADCM database SSL certificate file path:", "", false, false)
+				wrap(&config.ADCMDBSSLKeyFile, "ADCM database SSL private key file path:", "", false, false)
 			}
 		}
 	}
 
-	if len(dbPass) == 0 {
-		dbPass = utils.GenerateRandomString(16)
+	if len(config.ADCMDBPassword) == 0 {
+		config.ADCMDBPassword = utils.GenerateRandomString(16)
 	}
 
-	xsecretsData["adcm-db-name"] = dbName
-	xsecretsData["adcm-db-user"] = dbUser
-	xsecretsData["adcm-db-pass"] = dbPass
+	if !managedADPG {
+		portStr := strconv.Itoa(int(config.ADCMDBPort))
+		helpers = append(helpers, compose.Environment(svcNameAdcm,
+			compose.Env{Name: "DB_HOST", Value: &config.ADCMDBHost},
+			compose.Env{Name: "DB_PORT", Value: &portStr},
+		))
+	}
 
-	adcmImage := services[svcNameAdcm].image
-	adcmTag := services[svcNameAdcm].tag
-	adcmPublishPort := services[svcNameAdcm].port
+	if config.ADCMDBSSLMode != postgresSSLMode {
+		sslOpts := types.DbSSLOptions{SSLMode: config.ADCMDBSSLMode}
+
+		optStr := sslOpts.String()
+		helpers = append(helpers, compose.Environment(svcNameAdcm,
+			compose.Env{Name: pgSslOptEnvKey, Value: &optStr},
+		))
+
+		if len(config.ADCMDBSSLCaFile) > 0 {
+			b, err := os.ReadFile(config.ADCMDBSSLCaFile)
+			if err != nil {
+				logger.Fatal(err)
+			}
+			xsecretsData[pgSslCaKey] = string(b)
+		}
+		if len(config.ADCMDBSSLCertFile) > 0 {
+			b, err := os.ReadFile(config.ADCMDBSSLCertFile)
+			if err != nil {
+				logger.Fatal(err)
+			}
+			xsecretsData[pgSslCertKey] = string(b)
+		}
+		if len(config.ADCMDBSSLKeyFile) > 0 {
+			b, err := os.ReadFile(config.ADCMDBSSLKeyFile)
+			if err != nil {
+				logger.Fatal(err)
+			}
+			xsecretsData[pgSslKeyKey] = string(b)
+		}
+	}
+
+	xsecretsData["adcm-db-name"] = config.ADCMDBName
+	xsecretsData["adcm-db-user"] = config.ADCMDBUser
+	xsecretsData["adcm-db-pass"] = config.ADCMDBPassword
 
 	if interactive {
-		adcmPublishPortDefault := strconv.Itoa(int(adcmPublishPort))
-		wrap(&adcmImage, "ADCM image", adcmImage, false, false)
-		wrap(&adcmTag, "ADCM image tag", adcmTag, false, false)
-		wrap(&adcmPublishPort, "ADCM publish port", adcmPublishPortDefault, false, false)
+		adcmPublishPortDefault := strconv.Itoa(int(config.ADCMPublishPort))
+		wrap(&config.ADCMImage, "ADCM image", config.ADCMImage, false, false)
+		wrap(&config.ADCMTag, "ADCM image tag", config.ADCMTag, false, false)
+		wrap(&config.ADCMPublishPort, "ADCM publish port", adcmPublishPortDefault, false, false)
 	}
 
 	helpers = append(helpers,
-		compose.Image(svcNameAdcm, adcmImage+":"+adcmTag),
+		compose.Image(svcNameAdcm, config.ADCMImage+":"+config.ADCMTag),
 	)
-	if adcmPublishPort > 0 {
+	if len(config.ADCMUrl) == 0 && config.ADCMPublishPort > 0 {
 		var adcmUrl string
 		if hostIp := utils.HostIp(); len(hostIp) > 0 {
 			// TODO: automatically switch http to https
-			adcmUrl = fmt.Sprintf("http://%s:%d", hostIp, adcmPublishPort)
+			adcmUrl = fmt.Sprintf("http://%s:%d", hostIp, config.ADCMPublishPort)
 		}
 		if interactive {
-			wrap(&adcmUrl, "ADCM url", adcmUrl, false, false)
+			wrap(&config.ADCMUrl, "ADCM url", adcmUrl, false, false)
 		}
 
 		helpers = append(helpers,
 			compose.Environment(svcNameAdcm, compose.Env{Name: "ADCM_URL", Value: &adcmUrl}),
-			compose.PublishPort(svcNameAdcm, adcmPublishPort, services[svcNameAdcm].port),
+			compose.PublishPort(svcNameAdcm, config.ADCMPublishPort, services[svcNameAdcm].port),
 		)
 	}
 
@@ -257,29 +293,24 @@ func initProject(cmd *cobra.Command, args []string) {
 			}),
 		)
 
-		var postgresPassword string
-		var port uint16
-		image := services[svcNameAdpg].image
-		tag := services[svcNameAdpg].tag
+		if !isValuesReadFromFile && interactive {
+			wrap(&config.ADPGPassword, "ADPG superuser password (random generated):", "", false, true)
 
-		if interactive {
-			wrap(&postgresPassword, "ADCM superuser password (random generated):", "", false, true)
-
-			wrap(&image, "ADPG image", image, false, false)
-			wrap(&tag, "ADPG image tag", tag, false, false)
-			wrap(&port, "ADPG publish port", "0", false, false)
+			wrap(&config.ADPGImage, "ADPG image", config.ADPGImage, false, false)
+			wrap(&config.ADPGTag, "ADPG image tag", config.ADPGTag, false, false)
+			wrap(&config.ADPGPublishPort, "ADPG publish port", "0", false, false)
 		}
 
-		if len(postgresPassword) == 0 {
-			postgresPassword = utils.GenerateRandomString(16)
+		if len(config.ADPGPassword) == 0 {
+			config.ADPGPassword = utils.GenerateRandomString(16)
 		}
-		xsecretsData["adpg-password"] = postgresPassword
+		xsecretsData["adpg-password"] = config.ADPGPassword
 
 		helpers = append(helpers,
-			compose.Image(svcNameAdpg, image+":"+tag),
+			compose.Image(svcNameAdpg, config.ADPGImage+":"+config.ADPGTag),
 		)
-		if port > 0 {
-			helpers = append(helpers, compose.PublishPort(svcNameAdpg, port, services[svcNameAdpg].port))
+		if config.ADPGPublishPort > 0 {
+			helpers = append(helpers, compose.PublishPort(svcNameAdpg, config.ADPGPublishPort, services[svcNameAdpg].port))
 		}
 	}
 
@@ -291,21 +322,18 @@ func initProject(cmd *cobra.Command, args []string) {
 			compose.Command(svcNameConsul, []string{"agent", "-dev", "-bind=0.0.0.0"}),
 		)
 
-		image := services[svcNameConsul].image
-		tag := services[svcNameConsul].tag
-		port := services[svcNameConsul].port
-
-		if interactive {
-			wrap(&image, "Consul image", image, false, false)
-			wrap(&tag, "Consul image tag", tag, false, false)
-			wrap(&port, "Consul publish port", strconv.Itoa(int(port)), false, false)
+		if !isValuesReadFromFile && interactive {
+			portStr := strconv.Itoa(int(config.ConsulPublishPort))
+			wrap(&config.ConsulImage, "Consul image", config.ConsulImage, false, false)
+			wrap(&config.ConsulTag, "Consul image tag", config.ConsulTag, false, false)
+			wrap(&config.ConsulPublishPort, "Consul publish port", portStr, false, false)
 		}
 
 		helpers = append(helpers,
-			compose.Image(svcNameConsul, image+":"+tag),
+			compose.Image(svcNameConsul, config.ConsulImage+":"+config.ConsulTag),
 		)
-		if port > 0 {
-			helpers = append(helpers, compose.PublishPort(svcNameConsul, port, services[svcNameConsul].port))
+		if config.ConsulPublishPort > 0 {
+			helpers = append(helpers, compose.PublishPort(svcNameConsul, config.ConsulPublishPort, services[svcNameConsul].port))
 		}
 	} else {
 		//"Consul url: (required)"
@@ -334,21 +362,17 @@ func initProject(cmd *cobra.Command, args []string) {
 			)
 		}
 
-		image := services[svcNameVault].image
-		tag := services[svcNameVault].tag
-		port := services[svcNameVault].port
-
-		if interactive {
-			wrap(&image, "Vault image", image, false, false)
-			wrap(&tag, "Vault image tag", tag, false, false)
-			wrap(&port, "Vault publish port", "0", false, false)
+		if !isValuesReadFromFile && interactive {
+			wrap(&config.VaultImage, "Vault image", config.VaultImage, false, false)
+			wrap(&config.VaultTag, "Vault image tag", config.VaultTag, false, false)
+			wrap(&config.VaultPublishPort, "Vault publish port", "0", false, false)
 		}
 
 		helpers = append(helpers,
-			compose.Image(svcNameVault, image+":"+tag),
+			compose.Image(svcNameVault, config.VaultImage+":"+config.VaultTag),
 		)
-		if port > 0 {
-			helpers = append(helpers, compose.PublishPort(svcNameVault, port, services[svcNameVault].port))
+		if config.VaultPublishPort > 0 {
+			helpers = append(helpers, compose.PublishPort(svcNameVault, config.VaultPublishPort, services[svcNameVault].port))
 		}
 	} else {
 		//"Vault url: (required)"
@@ -548,4 +572,75 @@ func selectValue(prompt, defaultValue string, options []string) (string, error) 
 	}
 
 	return v, nil
+}
+
+func valuesFromConfigFile(configFile string) (*initConfig, error) {
+	fi, err := os.Open(configFile)
+	if err != nil {
+		return nil, err
+	}
+	defer fi.Close()
+
+	var config *initConfig
+	dec := yaml.NewDecoder(fi)
+	dec.KnownFields(true)
+	if err = dec.Decode(&config); err != nil {
+		return nil, err
+	}
+
+	return config, nil
+}
+
+func initConfigDefaults(config *initConfig) {
+	if config.ADCMDBPort == 0 {
+		config.ADCMDBPort = 5432
+	}
+	if len(config.ADCMDBName) == 0 {
+		config.ADCMDBName = "adcm"
+	}
+	if len(config.ADCMDBUser) == 0 {
+		config.ADCMDBUser = "adcm"
+	}
+	if len(config.ADCMDBSSLMode) == 0 {
+		config.ADCMDBSSLMode = postgresSSLMode
+	}
+	if config.ADCMPublishPort == 0 {
+		config.ADCMPublishPort = 8000
+	}
+	if len(config.ADCMImage) == 0 {
+		config.ADCMImage = compose.ADCMImage
+	}
+	if len(config.ADCMTag) == 0 {
+		config.ADCMTag = "2.6.0"
+	}
+	if config.ADCMPublishPort == 0 {
+		config.ADCMPublishPort = 8000
+	}
+
+	if len(config.ADPGImage) == 0 {
+		config.ADPGImage = compose.ADPGImage
+	}
+	if len(config.ADPGTag) == 0 {
+		config.ADPGTag = "16.4"
+	}
+
+	if len(config.ConsulImage) == 0 {
+		config.ConsulImage = compose.ConsulImage
+	}
+	if len(config.ConsulTag) == 0 {
+		config.ConsulTag = "v0.0.0"
+	}
+	if config.ConsulPublishPort == 0 {
+		config.ConsulPublishPort = 8500
+	}
+
+	if len(config.VaultImage) == 0 {
+		config.VaultImage = compose.VaultImage
+	}
+	if len(config.VaultTag) == 0 {
+		config.VaultTag = "2.2.0"
+	}
+	if config.VaultPublishPort == 0 {
+		config.VaultPublishPort = 8200
+	}
 }
