@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"github.com/gosimple/slug"
 	"io"
 	"os"
 	"path/filepath"
@@ -49,6 +50,7 @@ type initConfig struct {
 	ADCMTag           string `yaml:"adcm-tag"`
 	ADCMPublishPort   uint16 `yaml:"adcm-publish-port"`
 	ADCMUrl           string `yaml:"adcm-url"`
+	ADCMVolume        string `yaml:"adcm-volume"`
 
 	ADPGPassword    string `yaml:"adpg-pass"`
 	ADPGImage       string `yaml:"adpg-image"`
@@ -204,6 +206,8 @@ func initProject(cmd *cobra.Command, args []string) {
 				wrap(&config.ADCMDBSSLKeyFile, "ADCM database SSL private key file path:", "", false, false)
 			}
 		}
+
+		wrap(&config.ADCMVolume, "ADCM volume name or path:", config.ADCMVolume, false, false)
 	}
 
 	if len(config.ADCMDBPassword) == 0 {
@@ -387,7 +391,20 @@ func initProject(cmd *cobra.Command, args []string) {
 
 	uid := 10001
 	for _, svcName := range svcList {
-		if svcName != "adcm" {
+		hostname := prj.Name + "-" + svcName
+		helpers = append(helpers,
+			compose.CapDropAll(svcName),
+			compose.Hostname(svcName, hostname),
+			compose.RestartPolicy(svcName, composeTypes.RestartPolicyUnlessStopped),
+			compose.PullPolicy(svcName, composeTypes.PullPolicyAlways),
+		)
+
+		svcMounts := services[svcName].mounts
+		volumeName := hostname
+
+		if svcName == svcNameAdcm {
+			volumeName = config.ADCMVolume
+		} else {
 			uids := strconv.Itoa(uid)
 			uid++
 			helpers = append(helpers,
@@ -397,22 +414,12 @@ func initProject(cmd *cobra.Command, args []string) {
 			)
 		}
 
-		hostname := prj.Name + "-" + svcName
-		helpers = append(helpers,
-			compose.CapDropAll(svcName),
-			compose.Hostname(svcName, hostname),
-			compose.RestartPolicy(svcName, composeTypes.RestartPolicyUnlessStopped),
-			compose.PullPolicy(svcName, composeTypes.PullPolicyAlways),
-		)
-		svcMounts := services[svcName].mounts
 		for _, mount := range svcMounts {
 			mount = strings.TrimRight(mount, "/")
-			src := hostname
 			if len(svcMounts) > 1 {
-				idx := strings.LastIndex(mount, "/")
-				src += "-" + mount[idx+1:]
+				volumeName += "-" + slug.Make(strings.TrimLeft(mount, "/"))
 			}
-			helpers = append(helpers, compose.Volumes(svcName, src+":"+mount))
+			helpers = append(helpers, compose.Volumes(svcName, volumeName+":"+mount))
 		}
 	}
 
@@ -615,6 +622,9 @@ func initConfigDefaults(config *initConfig) {
 	}
 	if config.ADCMPublishPort == 0 {
 		config.ADCMPublishPort = 8000
+	}
+	if len(config.ADCMVolume) == 0 {
+		config.ADCMVolume = "adcm"
 	}
 
 	if len(config.ADPGImage) == 0 {

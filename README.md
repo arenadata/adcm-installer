@@ -38,7 +38,7 @@ adi init adcm-project --from-config config.yaml
 ```
 
 | key                   | value type | default                        | description                             |
-| --------------------- | ---------- | ------------------------------ | --------------------------------------- |
+| --------------------- | ---------- |--------------------------------|-----------------------------------------|
 | adcm-db-host          | string     |                                | ADCM database host                      |
 | adcm-db-port          | uint16     | 5432                           | ADCM database port                      |
 | adcm-db-name          | string     | adcm                           | ADCM database name                      |
@@ -52,6 +52,7 @@ adi init adcm-project --from-config config.yaml
 | adcm-tag              | string     | 2.6.0                          | ADCM image tag                          |
 | adcm-publish-port     | uint16     | 8000                           | ADCM publish port                       |
 | adcm-url`*`           | string     | computed                       | ADCM url                                |
+| adcm-volume           | string     | adcm                           | ADCM volume name or path                |
 | adpg-pass             | string     | random generated               | ADPG superuser password                 |
 | adpg-image            | string     | hub.arenadata.io/adcm/postgres | ADPG image                              |
 | adpg-tag              | string     | v16.4_arenadata1               | ADPG image tag                          |
