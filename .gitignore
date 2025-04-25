@@ -10,5 +10,6 @@ ad-app.yml
 ad-app.yaml
 adcm.yml
 adcm.yaml
+config.yaml
 
 *.key

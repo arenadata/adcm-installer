@@ -266,21 +266,23 @@ func initProject(cmd *cobra.Command, args []string) {
 		wrap(&config.ADCMPublishPort, "ADCM publish port", adcmPublishPortDefault, false, false)
 	}
 
-	helpers = append(helpers,
-		compose.Image(svcNameAdcm, config.ADCMImage+":"+config.ADCMTag),
-	)
-	if len(config.ADCMUrl) == 0 && config.ADCMPublishPort > 0 {
-		var adcmUrl string
+	if len(config.ADCMUrl) == 0 {
 		if hostIp := utils.HostIp(); len(hostIp) > 0 {
 			// TODO: automatically switch http to https
-			adcmUrl = fmt.Sprintf("http://%s:%d", hostIp, config.ADCMPublishPort)
+			config.ADCMUrl = fmt.Sprintf("http://%s:%d", hostIp, config.ADCMPublishPort)
 		}
 		if interactive {
-			wrap(&config.ADCMUrl, "ADCM url", adcmUrl, false, false)
+			wrap(&config.ADCMUrl, "ADCM url", config.ADCMUrl, false, false)
 		}
+	}
 
+	helpers = append(helpers,
+		compose.Image(svcNameAdcm, config.ADCMImage+":"+config.ADCMTag),
+		compose.Environment(svcNameAdcm, compose.Env{Name: "ADCM_URL", Value: &config.ADCMUrl}),
+	)
+
+	if config.ADCMPublishPort > 0 {
 		helpers = append(helpers,
-			compose.Environment(svcNameAdcm, compose.Env{Name: "ADCM_URL", Value: &adcmUrl}),
 			compose.PublishPort(svcNameAdcm, config.ADCMPublishPort, services[svcNameAdcm].port),
 		)
 	}
@@ -591,7 +593,7 @@ func valuesFromConfigFile(configFile string) (*initConfig, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer fi.Close()
+	defer func() { _ = fi.Close() }()
 
 	var config *initConfig
 	dec := yaml.NewDecoder(fi)
