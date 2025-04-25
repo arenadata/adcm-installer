@@ -63,4 +63,5 @@ adi init adcm-project --from-config config.yaml
 | vault-image           | string     | openbao/openbao                | Vault image                             |
 | vault-tag             | string     | 2.2.0                          | Vault image tag                         |
 | vault-publish-port    | uint16     |                                | Vault publish port                      |
+
 `*` - not implemented
