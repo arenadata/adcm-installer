@@ -133,16 +133,6 @@ type Env struct {
 	Value *string
 }
 
-func ToEnv(m map[string]*string) []Env {
-	envs := make([]Env, len(m))
-	i := 0
-	for k, v := range m {
-		envs[i] = Env{Name: k, Value: v}
-		i++
-	}
-	return envs
-}
-
 func Environment(svcName string, envs ...Env) ModHelper {
 	return func(prj *composeTypes.Project) error {
 		if len(envs) == 0 {

@@ -3,16 +3,12 @@ package compose
 import (
 	"context"
 	"fmt"
-	"github.com/docker/compose/v2/cmd/formatter"
-	"github.com/docker/docker/api/types/system"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/compose-spec/compose-go/v2/types"
-	"github.com/containerd/platforms"
 	"github.com/docker/cli/cli/command"
-	"github.com/docker/cli/cli/command/container"
 	cliflags "github.com/docker/cli/cli/flags"
 	"github.com/docker/compose/v2/pkg/api"
 	"github.com/docker/compose/v2/pkg/compose"
@@ -20,7 +16,7 @@ import (
 	moby "github.com/docker/docker/api/types"
 	containerTypes "github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/api/types/network"
+	"github.com/docker/docker/api/types/system"
 	"github.com/sirupsen/logrus"
 )
 
@@ -40,29 +36,6 @@ func NewComposeService(ops ...command.CLIOption) (*Compose, error) {
 	}
 
 	return &Compose{svc: compose.NewComposeService(cli), cli: cli}, nil
-}
-
-func (c Compose) LogConsumer(ctx context.Context) api.LogConsumer {
-	return formatter.NewLogConsumer(
-		ctx,
-		c.cli.Out(),
-		c.cli.Err(),
-		false,
-		false,
-		true,
-	)
-}
-
-func (c Compose) Create(ctx context.Context, prj *types.Project) error {
-	timeout := 30 * time.Second
-
-	return c.svc.Create(ctx, prj, api.CreateOptions{
-		Timeout: &timeout,
-	})
-}
-
-func (c Compose) Start(ctx context.Context, projectName string, services ...string) error {
-	return c.svc.Start(ctx, projectName, api.StartOptions{AttachTo: services, Services: services, Wait: true})
 }
 
 func (c Compose) Up(ctx context.Context, prj *types.Project) error {
@@ -95,16 +68,6 @@ func (c Compose) list(ctx context.Context, all bool, filter ...filters.KeyValueP
 	})
 }
 
-func (c Compose) Exec(ctx context.Context, containerName, cmd string, args ...string) error {
-	exec := container.NewExecOptions()
-	exec.Command = []string{cmd}
-	exec.Command = append(exec.Command, args...)
-	exec.Interactive = false
-	exec.TTY = false
-
-	return container.RunExec(ctx, c.cli, containerName, exec)
-}
-
 func (c Compose) List(ctx context.Context, all bool) ([]api.Stack, error) {
 	list, err := c.list(ctx, all,
 		hasProjectLabelFilter(),
@@ -116,62 +79,6 @@ func (c Compose) List(ctx context.Context, all bool) ([]api.Stack, error) {
 	}
 
 	return containersToStacks(list)
-}
-
-func (c Compose) ContainerRun(
-	ctx context.Context,
-	containerConfig *containerTypes.Config,
-	hostConfig *containerTypes.HostConfig,
-	networkConfig *network.NetworkingConfig,
-	platform *platforms.Platform,
-	containerName string,
-) error {
-	dockerCli := c.cli.Client()
-	resp, err := dockerCli.ContainerCreate(ctx,
-		containerConfig,
-		hostConfig,
-		networkConfig,
-		platform,
-		containerName,
-	)
-	if err != nil {
-		return err
-	}
-
-	//// TODO: maybe use docker cli?
-	//container.NewRunCommand()
-
-	if err = dockerCli.ContainerStart(ctx, resp.ID, containerTypes.StartOptions{}); err != nil {
-		return err
-	}
-
-	newContainer, err := dockerCli.ContainerInspect(ctx, resp.ID)
-	if err != nil {
-		return err
-	}
-
-	var count int
-	for newContainer.State.Status != "running" {
-		if count == 10 {
-			return fmt.Errorf("timeout waiting for container %s to start", containerName)
-		}
-
-		newContainer, err = dockerCli.ContainerInspect(ctx, resp.ID)
-		if err != nil {
-			return err
-		}
-
-		count++
-		time.Sleep(3 * time.Second)
-	}
-
-	return nil
-}
-
-func (c Compose) ContainerRemove(ctx context.Context, containerName string) error {
-	return c.cli.Client().ContainerRemove(ctx, containerName, containerTypes.RemoveOptions{
-		Force: true,
-	})
 }
 
 func (c Compose) Info(ctx context.Context) (system.Info, error) {

@@ -13,7 +13,7 @@ var busybox []byte
 
 const ImageName = "busybox:stable-uclibc"
 
-func LoadBusybox(ctx context.Context) error {
+func LoadBusyboxImage(ctx context.Context) error {
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
 		return err

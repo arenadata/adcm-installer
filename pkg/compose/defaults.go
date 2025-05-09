@@ -1,8 +1,7 @@
 package compose
 
 const (
-	DefaultPlatform    = "linux/amd64"
-	DefaultProjectName = "app-arenadata"
+	DefaultPlatform = "linux/amd64"
 
 	ADLabel           = "app.arenadata.io"
 	ADAppTypeLabelKey = ADLabel + "/type"

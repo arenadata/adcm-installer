@@ -215,7 +215,7 @@ func applyProject(cmd *cobra.Command, _ []string) {
 	// compose.Down(projectInit) w/o delete volumes
 	// compose.Up(prj)
 
-	if err = assets.LoadBusybox(cmd.Context()); err != nil {
+	if err = assets.LoadBusyboxImage(cmd.Context()); err != nil {
 		logger.Fatal(err)
 	}
 
