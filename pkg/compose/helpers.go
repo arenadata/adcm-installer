@@ -293,14 +293,19 @@ func Secrets(svcName string, secrets ...Secret) ModHelper {
 		for _, sec := range secrets {
 			filepath := path.Join(SecretsPath, sec.Source)
 			n, hasSrc := hasSource(svc.Secrets, sec)
+			var fileMode *composeTypes.FileMode
+			if sec.FileMode != nil {
+				fileMode = utils.Ptr(composeTypes.FileMode(*sec.FileMode))
+			}
+
 			if !hasSrc {
 				svc.Secrets = append(svc.Secrets, composeTypes.ServiceSecretConfig{
 					Source: sec.Source,
 					Target: filepath,
-					Mode:   sec.FileMode,
+					Mode:   fileMode,
 				})
 			} else if sec.FileMode != nil {
-				svc.Secrets[n].Mode = sec.FileMode
+				svc.Secrets[n].Mode = fileMode
 			}
 
 			prj.Secrets[sec.Source] = composeTypes.SecretConfig{Environment: sec.Source}

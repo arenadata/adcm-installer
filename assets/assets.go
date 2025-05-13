@@ -35,7 +35,7 @@ func LoadBusyboxImage(ctx context.Context) error {
 	}
 	defer cli.Close()
 
-	resp, err := cli.ImageLoad(ctx, bytes.NewBuffer(busybox), true)
+	resp, err := cli.ImageLoad(ctx, bytes.NewBuffer(busybox), client.ImageLoadWithQuiet(true))
 	if err != nil {
 		return err
 	}
