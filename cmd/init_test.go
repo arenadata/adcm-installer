@@ -134,7 +134,7 @@ func Test_isConfigExists(t *testing.T) {
 	}
 
 	absPath, err := filepath.Abs("")
-	assert.NotEqual(t, nil, err)
+	assert.Equal(t, nil, err)
 
 	tests := []struct {
 		name    string
@@ -154,7 +154,7 @@ func Test_isConfigExists(t *testing.T) {
 			}
 
 			s, err := tt.cmd.Flags().GetString("output")
-			assert.NotEqual(t, nil, err)
+			assert.Equal(t, nil, err)
 			if s != tt.want {
 				t.Errorf("isConfigExists() output = %v, expected %v", s, tt.want)
 			}
