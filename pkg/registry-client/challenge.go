@@ -1,3 +1,18 @@
+/*
+ Copyright (c) 2025 Arenadata Softwer LLC.
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+*/
+
 package client
 
 import (
@@ -26,6 +41,7 @@ func parseWWWAuthorization(s string) []*challenge {
 	var buf []rune
 
 	var isQuotedData, isEscapedData bool
+	valueLength := len(s)
 	for n, c := range s {
 		isQuoted := c == '"'
 		if isQuoted && !isEscapedData {
@@ -37,13 +53,10 @@ func parseWWWAuthorization(s string) []*challenge {
 			isEscapedData = true
 		}
 
-		if isCrLf := strings.ContainsRune("\r\n", c); isCrLf {
-			continue
-		}
-
+		isCrLf := strings.ContainsRune("\r\n", c)
 		isSeparator := strings.ContainsRune(" \t=,", c)
 
-		if !isQuotedData && !isEscapedData && isSeparator {
+		if !isQuotedData && !isEscapedData && (isSeparator || isCrLf) {
 			if len(buf) > 0 {
 				challenges = append(challenges, string(buf))
 				buf = nil
@@ -56,14 +69,16 @@ func parseWWWAuthorization(s string) []*challenge {
 		}
 
 		if !(isQuoted && !isEscapedData) {
-			buf = append(buf, c)
+			if !isCrLf {
+				buf = append(buf, c)
+			}
 		}
 
 		if !isEscaped && isEscapedData {
 			isEscapedData = false
 		}
 
-		if n == len(s)-1 {
+		if n == valueLength-1 {
 			challenges = append(challenges, string(buf))
 		}
 	}

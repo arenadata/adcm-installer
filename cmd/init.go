@@ -1,3 +1,18 @@
+/*
+ Copyright (c) 2025 Arenadata Softwer LLC.
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+*/
+
 package cmd
 
 import (
@@ -94,10 +109,10 @@ var (
 
 	// TODO: merge with initConfigDefaults
 	services = map[string]service{
-		svcNameAdcm:   {name: "ADCM", image: compose.ADCMImage, tag: "2.6.0", port: 8000, mounts: []string{"/adcm/data"}},
-		svcNameAdpg:   {name: "ADPG", image: compose.ADPGImage, tag: "v16.3.1", port: 5432, mounts: []string{"/data"}},
-		svcNameVault:  {name: "Vault", image: compose.VaultImage, tag: "2.2.0", port: 8200, mounts: []string{"/openbao/file", "/openbao/logs"}},
-		svcNameConsul: {name: "Consul", image: compose.ConsulImage, tag: "v0.0.0", port: 8500, mounts: []string{"/data"}},
+		svcNameAdcm:   {name: "ADCM", image: compose.ADCMImage, tag: compose.ADCMTag, port: compose.ADCMPublishPort, mounts: []string{"/adcm/data"}},
+		svcNameAdpg:   {name: "ADPG", image: compose.ADPGImage, tag: compose.ADPGTag, port: compose.ADPGPublishPort, mounts: []string{"/data"}},
+		svcNameVault:  {name: "Vault", image: compose.VaultImage, tag: compose.VaultTag, port: compose.VaultPublishPort, mounts: []string{"/openbao/file", "/openbao/logs"}},
+		svcNameConsul: {name: "Consul", image: compose.ConsulImage, tag: compose.ConsulTag, port: compose.ConsulPublishPort, mounts: []string{"/data"}},
 	}
 
 	allowSSLModes = []string{postgresSSLMode, "allow", "prefer", "require", "verify-ca", "verify-full"}
@@ -114,8 +129,11 @@ func init() {
 	rootCmd.AddCommand(initCmd)
 
 	ageKeyFlags(initCmd, "age-key", ageKeyFileName)
+	initCmdFlags(initCmd)
+}
 
-	f := initCmd.Flags()
+func initCmdFlags(cmd *cobra.Command) {
+	f := cmd.Flags()
 
 	f.Bool(svcNameAdpg, false, "Use managed ADPG")
 	f.Bool(svcNameConsul, false, "Use managed Consul")
@@ -125,7 +143,7 @@ func init() {
 
 	f.StringP("output", "o", "", "Output filename")
 	f.String("from-config", "", "Read variables from config file")
-	initCmd.MarkFlagsMutuallyExclusive("from-config", "interactive")
+	cmd.MarkFlagsMutuallyExclusive("from-config", "interactive")
 }
 
 func initProject(cmd *cobra.Command, args []string) {
@@ -163,7 +181,7 @@ func initProject(cmd *cobra.Command, args []string) {
 
 	prj := &composeTypes.Project{
 		Name:     args[0],
-		Services: composeTypes.Services{},
+		Services: make(composeTypes.Services),
 	}
 
 	wrap := func(v any, p, d string, r, s bool) {
@@ -514,12 +532,18 @@ func isConfigExists(cmd *cobra.Command) error {
 		}
 		workingDir := filepath.Dir(absPath)
 
-		outputPath = fileNames[0]
+		outputPath = filepath.Join(absPath, fileNames[0])
 		if candidates := findFiles(fileNames, workingDir); len(candidates) > 0 {
 			outputPath = candidates[0]
 		}
-		_ = cmd.Flags().Set("output", outputPath)
+	} else {
+		var err error
+		outputPath, err = filepath.Abs(outputPath)
+		if err != nil {
+			return fmt.Errorf("could not determine absolute path: %s", err)
+		}
 	}
+	_ = cmd.Flags().Set("output", outputPath)
 
 	force, _ := cmd.Flags().GetBool("force")
 	if ok, err := utils.FileExists(outputPath); err != nil {
@@ -607,7 +631,7 @@ func valuesFromConfigFile(configFile string) (*initConfig, error) {
 
 func initConfigDefaults(config *initConfig) {
 	if config.ADCMDBPort == 0 {
-		config.ADCMDBPort = 5432
+		config.ADCMDBPort = compose.ADPGPublishPort
 	}
 	if len(config.ADCMDBName) == 0 {
 		config.ADCMDBName = "adcm"
@@ -619,16 +643,13 @@ func initConfigDefaults(config *initConfig) {
 		config.ADCMDBSSLMode = postgresSSLMode
 	}
 	if config.ADCMPublishPort == 0 {
-		config.ADCMPublishPort = 8000
+		config.ADCMPublishPort = compose.ADCMPublishPort
 	}
 	if len(config.ADCMImage) == 0 {
 		config.ADCMImage = compose.ADCMImage
 	}
 	if len(config.ADCMTag) == 0 {
-		config.ADCMTag = "2.6.0"
-	}
-	if config.ADCMPublishPort == 0 {
-		config.ADCMPublishPort = 8000
+		config.ADCMTag = compose.ADCMTag
 	}
 	if len(config.ADCMVolume) == 0 {
 		config.ADCMVolume = "adcm"
@@ -638,26 +659,26 @@ func initConfigDefaults(config *initConfig) {
 		config.ADPGImage = compose.ADPGImage
 	}
 	if len(config.ADPGTag) == 0 {
-		config.ADPGTag = "v16.3.1"
+		config.ADPGTag = compose.ADPGTag
 	}
 
 	if len(config.ConsulImage) == 0 {
 		config.ConsulImage = compose.ConsulImage
 	}
 	if len(config.ConsulTag) == 0 {
-		config.ConsulTag = "v0.0.0"
+		config.ConsulTag = compose.ConsulTag
 	}
 	if config.ConsulPublishPort == 0 {
-		config.ConsulPublishPort = 8500
+		config.ConsulPublishPort = compose.ConsulPublishPort
 	}
 
 	if len(config.VaultImage) == 0 {
 		config.VaultImage = compose.VaultImage
 	}
 	if len(config.VaultTag) == 0 {
-		config.VaultTag = "2.2.0"
+		config.VaultTag = compose.VaultTag
 	}
 	if config.VaultPublishPort == 0 {
-		config.VaultPublishPort = 8200
+		config.VaultPublishPort = compose.VaultPublishPort
 	}
 }
