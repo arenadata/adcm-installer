@@ -41,7 +41,7 @@ var componentsUpdateCmd = &cobra.Command{
 			Timeout: 5 * time.Second,
 		}
 
-		const link = "https://github.com/arenadata/adcm/releases/latest"
+		const link = "https://github.com/arenadata/adcm-installer/releases/latest"
 
 		resp, err := client.Get(link)
 		if err != nil {
@@ -58,9 +58,15 @@ var componentsUpdateCmd = &cobra.Command{
 			logger.Fatal(err)
 		}
 
-		lastVersion, err := semver.NewVersion(path.Base(u.Path))
+		ver := path.Base(u.Path)
+		if ver == "releases" {
+			cmd.Println("ADCM Installer has no releases")
+			return
+		}
+
+		lastVersion, err := semver.NewVersion(ver)
 		if err != nil {
-			logger.Fatal(err)
+			logger.Fatalf("%s: %s", err, ver)
 		}
 
 		currentVersion, err := semver.NewVersion(version)
@@ -69,7 +75,7 @@ var componentsUpdateCmd = &cobra.Command{
 		}
 
 		if lastVersion.GreaterThan(currentVersion) {
-			fmt.Printf(`There is a new version of adcm-installer %q available. Current version: %q.
+			cmd.Printf(`There is a new version of adcm-installer %q available. Current version: %q.
 You can download the latest version: %s
 `, lastVersion, currentVersion, link)
 			return
