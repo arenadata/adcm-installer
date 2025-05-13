@@ -36,6 +36,7 @@ var rootCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if getBool(cmd, "version") {
 			cmd.Println(version)
+			componentsUpdate(cmd, args)
 			return nil
 		}
 		return cmd.Usage()

@@ -16,7 +16,6 @@
 package cmd
 
 import (
-	"fmt"
 	"net/http"
 	"net/url"
 	"path"
@@ -31,60 +30,62 @@ var componentsUpdateCmd = &cobra.Command{
 	Aliases: []string{"u"},
 	Use:     "update",
 	Short:   "Ensure that the latest version of all installed components is installed",
-	Run: func(cmd *cobra.Command, args []string) {
-		logger := log.WithField("command", "components-update")
-
-		client := &http.Client{
-			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				return http.ErrUseLastResponse
-			},
-			Timeout: 5 * time.Second,
-		}
-
-		const link = "https://github.com/arenadata/adcm-installer/releases/latest"
-
-		resp, err := client.Get(link)
-		if err != nil {
-			logger.Fatal(err)
-		}
-
-		loc := resp.Header.Get("Location")
-		if len(loc) == 0 {
-			return
-		}
-
-		u, err := url.Parse(loc)
-		if err != nil {
-			logger.Fatal(err)
-		}
-
-		ver := path.Base(u.Path)
-		if ver == "releases" {
-			cmd.Println("ADCM Installer has no releases")
-			return
-		}
-
-		lastVersion, err := semver.NewVersion(ver)
-		if err != nil {
-			logger.Fatalf("%s: %s", err, ver)
-		}
-
-		currentVersion, err := semver.NewVersion(version)
-		if err != nil {
-			logger.Fatal(err)
-		}
-
-		if lastVersion.GreaterThan(currentVersion) {
-			cmd.Printf(`There is a new version of adcm-installer %q available. Current version: %q.
-You can download the latest version: %s
-`, lastVersion, currentVersion, link)
-			return
-		}
-
-		fmt.Println("Already up to date.")
-	},
+	Run:     componentsUpdate,
 }
 
 func init() {
 	componentsCmd.AddCommand(componentsUpdateCmd)
+}
+
+func componentsUpdate(cmd *cobra.Command, _ []string) {
+	logger := log.WithField("command", "components-update")
+
+	client := &http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+		Timeout: 5 * time.Second,
+	}
+
+	const link = "https://github.com/arenadata/adcm-installer/releases/latest"
+
+	resp, err := client.Get(link)
+	if err != nil {
+		logger.Fatal(err)
+	}
+
+	loc := resp.Header.Get("Location")
+	if len(loc) == 0 {
+		return
+	}
+
+	u, err := url.Parse(loc)
+	if err != nil {
+		logger.Fatal(err)
+	}
+
+	ver := path.Base(u.Path)
+	if ver == "releases" {
+		cmd.Println("ADCM Installer has no new releases")
+		return
+	}
+
+	lastVersion, err := semver.NewVersion(ver)
+	if err != nil {
+		logger.Fatalf("%s: %s", err, ver)
+	}
+
+	currentVersion, err := semver.NewVersion(version)
+	if err != nil {
+		logger.Fatal("%s: %s", err, version)
+	}
+
+	if lastVersion.GreaterThan(currentVersion) {
+		cmd.Printf(`There is a new version of adcm-installer %q available. Current version: %q.
+You can download the latest version: %s
+`, lastVersion, currentVersion, link)
+		return
+	}
+
+	cmd.Println("Already up to date.")
 }
