@@ -316,7 +316,7 @@ func initProject(cmd *cobra.Command, args []string) {
 
 	helpers = append(helpers,
 		compose.Image(svcNameAdcm, config.ADCMImage+":"+config.ADCMTag),
-		compose.Environment(svcNameAdcm, compose.Env{Name: "ADCM_URL", Value: &config.ADCMUrl}),
+		compose.Environment(svcNameAdcm, compose.Env{Name: "DEFAULT_ADCM_URL", Value: &config.ADCMUrl}),
 	)
 
 	if config.ADCMPublishPort > 0 {
