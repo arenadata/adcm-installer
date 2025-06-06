@@ -41,6 +41,7 @@ var secretsCmd = &cobra.Command{
 	Aliases: []string{"sec", "secret"},
 	Use:     "secrets",
 	Short:   "Manage secrets",
+	Long:    ``,
 }
 
 func init() {

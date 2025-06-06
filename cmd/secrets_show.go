@@ -23,7 +23,12 @@ import (
 var showCmd = &cobra.Command{
 	Use:   "show",
 	Short: "Show application secrets",
-	Run:   secretsShow,
+	Long: `Displays decrypted secrets config file.
+- --age-key takes the value of the private key in clear text. Has priority over
+            --age-key-file
+- --age-key-file takes the value of the path to the file with the private key
+- --file specifies the path to the config file`,
+	Run: secretsShow,
 }
 
 func init() {
