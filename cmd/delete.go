@@ -31,6 +31,16 @@ var deleteCmd = &cobra.Command{
 	Aliases: []string{"del", "rm"},
 	Use:     "delete [name]",
 	Short:   "Delete resources by file name or installation name",
+	Long: `Removes an existing ADCM installation. Without arguments, the current directory
+will be searched for an adcm.yaml file (adcm.yml/ad-app.yml/ad-app.yaml); if
+the file is missing, an error will be returned. If the name of an existing
+installation is specified, it will be removed without searching for a
+configuration file.
+- --file specifies the path to the configuration file
+- --volumes deletion will be performed together with the data. During the
+            execution of the command, you will be asked to confirm deletion
+            in interactive mode
+- --yes disables interactive mode when deleting data`,
 	PreRunE: cobra.MaximumNArgs(1),
 	Run:     deleteProject,
 }

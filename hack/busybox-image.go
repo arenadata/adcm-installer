@@ -84,6 +84,7 @@ func main() {
 
 	reg := client.NewRegistryClient(domain)
 
+	// FIXME: may return type application/vnd.docker.distribution.manifest.v2+json instead of index
 	indexBytes, err := reg.Manifest(repo, tag, ocispec.MediaTypeImageIndex)
 	if err != nil {
 		log.Fatal(err)
@@ -99,7 +100,6 @@ func main() {
 		MediaType: ocispec.MediaTypeImageIndex,
 	}
 
-	var img *image.Image
 	var imgDigest digest.Digest
 	var manifest *ocispec.Manifest
 	var manifestBytes []byte
@@ -161,6 +161,7 @@ func main() {
 		return
 	}
 
+	var img *image.Image
 	if err = unmarshalStrict(configBytes, &img); err != nil {
 		return
 	}

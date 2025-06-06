@@ -101,8 +101,28 @@ func (img service) Image() string {
 
 var (
 	initCmd = &cobra.Command{
-		Use:     "init <name>",
-		Short:   "Initialize a new configuration",
+		Use:   "init <name>",
+		Short: "Initialize a new configuration",
+		Long: `Creates a configuration file with the specified name in docker compose format
+with a list of preconfigured services. The private key is used to
+encrypt/decrypt secrets in the configuration file, which is looked for in the
+current directory in a file named age.key. If the age.key file does not exist,
+it will be created automatically. When calling the command without specifying
+additional parameters, you will be prompted for parameters for connecting to
+the database in interactive mode. Attempting to call the command with an 
+existing configuration file, an invalid age.key file format, or without
+specifying an installation name will result in the program exiting with an
+error. The installation name must be unique within a single server.
+- --adpg adds the PostgreSQL service to the configuration file and configures
+         ADCM to use it. Interactive mode is not used without specifying
+         additional parameters
+- --age-key takes the value of the private key in cleartext. Takes precedence
+            over --age-key-file
+- --age-key-file takes the path to the file with the private key
+- --force allows you to overwrite the existing configuration file
+- --from-config path to a file in yaml format filled with variables for
+                fine-tuning the configuration without using interactive mode
+- --interactive fine-tuning each service in interactive mode`,
 		PreRunE: cobra.ExactArgs(1),
 		Run:     initProject,
 	}
@@ -136,8 +156,8 @@ func initCmdFlags(cmd *cobra.Command) {
 	f := cmd.Flags()
 
 	f.Bool(svcNameAdpg, false, "Use managed ADPG")
-	f.Bool(svcNameConsul, false, "Use managed Consul")
-	f.Bool(svcNameVault, false, "Use managed Vault")
+	f.Bool(svcNameConsul, false, "Use managed Consul (Alpha)")
+	f.Bool(svcNameVault, false, "Use managed Vault (Alpha)")
 	f.Bool("force", false, "Force overwrite existing config file")
 	f.BoolP("interactive", "i", false, "Interactive mode")
 

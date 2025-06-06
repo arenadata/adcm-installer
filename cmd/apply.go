@@ -53,7 +53,23 @@ var (
 	applyCmd = &cobra.Command{
 		Use:   "apply",
 		Short: "Apply a configuration by file name",
-		Run:   applyProject,
+		Long: `Launches containers on the host specified in the configuration file. Before
+launching the master list of containers, directory permissions and database
+initialization are pre-configured (when calling adi init with the --adpg
+argument). Without arguments, the current directory's adcm.yaml
+(adcm.yml/ad-app.yml/ad-app.yaml) and age.key files are searched. If either
+file is missing or has an unknown format, the application will exit with an error.
+- --age-key takes the value of the private key in clear text. Has priority over
+            --age-key-file
+- --age-key-file takes the value of the path to the file with the private key
+- --dry-run terminates the command without starting containers with the output
+            of the configuration for docker compose with encrypted secrets
+- --file specifies the path to the configuration file
+- --output is used together with the --dry-run flag to specify the path of the
+		   file to which the output will be written
+- --pg-debug enables the output of debugging information in the container logs,
+             excluding the output of sensitive data`,
+		Run: applyProject,
 	}
 )
 
