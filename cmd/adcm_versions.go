@@ -28,7 +28,11 @@ import (
 var listVersionsCmd = &cobra.Command{
 	Use:   "adcm-versions",
 	Short: "List versions of Arenadata products",
-	Run:   listVersions,
+	Long: `Will list the 5 latest ADCM versions on hub.arenadata.io in semver format,
+sorted in descending order.
+- --all removes the limitation on the last 5 versions and displays all
+        available versions`,
+	Run: listVersions,
 }
 
 func init() {

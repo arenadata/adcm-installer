@@ -36,7 +36,9 @@ type stackView struct {
 var listNamespacesCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List running ADCM installation",
-	Run:   listNamespaces,
+	Long: `Displays a list of running ADCM installations on the current host
+- --all includes stopped ADCM installations in the output`,
+	Run: listNamespaces,
 }
 
 func init() {

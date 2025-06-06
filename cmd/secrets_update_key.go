@@ -23,7 +23,17 @@ import (
 var updateKeyCmd = &cobra.Command{
 	Use:   "update-key",
 	Short: "NOT IMPLEMENTED",
-	Run:   secretsUpdateKey,
+	Long: `Allows you to rotate the private key.
+- --file specifies the path to the configuration file
+- --new-age-key takes the value of the private key in clear text. Has priority
+                over --new-age-key-file
+- --new-age-key-file takes the value of the path to the file with the private
+                     key
+- --old-age-key takes the value of the private key in clear text. Has priority
+                over --old-age-key-file
+- --old-age-key-file takes the value of the path to the file with the private
+                     key`,
+	Run: secretsUpdateKey,
 }
 
 func init() {

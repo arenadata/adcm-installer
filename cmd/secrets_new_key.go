@@ -30,7 +30,10 @@ import (
 var newKeyCmd = &cobra.Command{
 	Use:   "new-key",
 	Short: "Generate a new private key",
-	Run:   secretsNewKey,
+	Long: `Creates a new file age.key. The command will fail if the file
+age.key exists.
+- --output - specifies the path to save the file with the private key`,
+	Run: secretsNewKey,
 }
 
 func init() {

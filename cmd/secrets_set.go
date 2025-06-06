@@ -17,16 +17,22 @@ package cmd
 
 import (
 	"bytes"
-	"github.com/arenadata/adcm-installer/pkg/secrets"
 	"os"
+
+	"github.com/arenadata/adcm-installer/pkg/secrets"
 
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 )
 
 var setCmd = &cobra.Command{
-	Use:     "set <key> <value>",
-	Short:   "Set or update a x-secret value",
+	Use:   "set <key> <value>",
+	Short: "Set or update a x-secret value",
+	Long: `Allows you to change or add a secret to the configuration file.
+- --age-key takes the value of the private key in plain text. Has priority over
+            --age-key-file
+- --age-key-file takes the value of the path to the file with the private key
+- --file specifies the path to the configuration file`,
 	PreRunE: cobra.ExactArgs(2),
 	Run:     secretSetValue,
 }
