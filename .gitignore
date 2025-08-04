@@ -13,3 +13,4 @@ adcm*.yaml
 config.yaml
 
 *.key
+.DS_Store
