@@ -18,15 +18,17 @@ package cmd
 import (
 	"bytes"
 	"os"
+	"strings"
 
-	"github.com/arenadata/adcm-installer/pkg/secrets"
+	"github.com/arenadata/adcm-installer/internal/services"
+	"github.com/arenadata/adcm-installer/internal/services/helpers"
 
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 )
 
 var setCmd = &cobra.Command{
-	Use:   "set <key> <value>",
+	Use:   "set <service-name>.<key> <value>",
 	Short: "Set or update a x-secret value",
 	Long: `Allows you to change or add a secret to the configuration file.
 - --age-key takes the value of the private key in plain text. Has priority over
@@ -59,27 +61,41 @@ func secretSetValue(cmd *cobra.Command, args []string) {
 		configFilePath = prj.ComposeFiles[0]
 	}
 
-	var enc *secrets.AgeCrypt
-	enc, _, err = readOrCreateNewAgeKey(cmd, "age-key")
-	if err != nil {
-		logger.Fatal(err)
+	value := args[1]
+	pathKeyParts := strings.Split(args[0], ".")
+	if len(pathKeyParts) != 2 {
+		logger.Fatalf("Invalid key format: %s", args[0])
 	}
+	svcName, secKey := pathKeyParts[0], pathKeyParts[1]
 
-	xSecrets, ok := prj.Extensions[xsecretsKey].(*xsecrets)
+	svc, ok := prj.Services[svcName]
 	if !ok {
-		logger.Fatal("xsecrets extension not match")
+		logger.Fatalf("Service %s not found", svcName)
 	}
 
-	if xSecrets.AgeRecipient != enc.Recipient().String() {
-		logger.Fatal("age_recipient not match")
-	}
-
-	val, err := enc.EncryptValue(args[1])
+	aes, err := encoder(cmd, prj)
 	if err != nil {
 		logger.Fatal(err)
 	}
+	if aes != nil {
+		value, err = aes.EncryptValue(value)
+		if err != nil {
+			logger.Fatal(err)
+		}
+	}
 
-	xSecrets.Data[args[0]] = val
+	ext, ok := svc.Extensions[services.XSecretsKey]
+	svcExtension := &services.XSecrets{}
+	if ok {
+		svcExtension = ext.(*services.XSecrets)
+	}
+	svcExtension.Data[secKey] = value
+
+	servicesModHelpers := helpers.NewModHelpers()
+	servicesModHelpers = append(servicesModHelpers, helpers.Extension(svcName, services.XSecretsKey, svcExtension))
+	if err = servicesModHelpers.Apply(prj); err != nil {
+		logger.Fatal(err)
+	}
 
 	buf := new(bytes.Buffer)
 	if err = toYaml(buf, prj); err != nil {

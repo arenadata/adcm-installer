@@ -56,7 +56,7 @@ func listNamespaces(cmd *cobra.Command, _ []string) {
 	}
 
 	all, _ := cmd.Flags().GetBool("all")
-	stacks, err := comp.List(cmd.Context(), all)
+	stacks, err := comp.ListProjects(cmd.Context(), all)
 	if err != nil {
 		logger.Fatal(err)
 	}
