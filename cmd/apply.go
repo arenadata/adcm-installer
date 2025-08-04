@@ -16,39 +16,45 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
-	"path/filepath"
-	"strconv"
+	"path"
 	"strings"
+	"time"
 
 	"github.com/arenadata/adcm-installer/assets"
+	"github.com/arenadata/adcm-installer/internal/services"
+	"github.com/arenadata/adcm-installer/internal/services/helpers"
 	"github.com/arenadata/adcm-installer/pkg/compose"
 	"github.com/arenadata/adcm-installer/pkg/secrets"
 	"github.com/arenadata/adcm-installer/pkg/types"
 	"github.com/arenadata/adcm-installer/pkg/utils"
+	"github.com/arenadata/adcm-installer/pkg/vault/unseal"
+	"github.com/arenadata/adcm-installer/pkg/vault/unseal/image"
 
-	"github.com/compose-spec/compose-go/v2/cli"
+	"github.com/Masterminds/semver/v3"
 	composeTypes "github.com/compose-spec/compose-go/v2/types"
-	dockerCompose "github.com/docker/compose/v2/cmd/compose"
+	"github.com/docker/cli/cli/command"
 	"github.com/docker/compose/v2/pkg/api"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
+	"golang.org/x/sync/errgroup"
 	"gopkg.in/yaml.v3"
 )
 
-const (
-	PathSeparator         = "ARENADATA_APP_PATH_SEPARATOR"
-	FilePath              = "ARENADATA_APP_FILE"
-	DisableDefaultEnvFile = "ARENADATA_APP_DISABLE_ENV_FILE"
-
-	xsecretsKey = "x-secrets"
-)
-
 var (
-	fileNames = []string{"adcm.yaml", "adcm.yml", "ad-app.yaml", "ad-app.yml"}
+	mapFlagsToEnv = map[string]string{
+		"db-host":       "DB_HOST",
+		"db-port":       "DB_PORT",
+		"db-name":       "DB_NAME",
+		"db-user":       "DB_USER",
+		"db-pass":       "DB_PASS",
+		"adpg-password": "POSTGRES_PASSWORD_FILE",
+	}
 
 	applyCmd = &cobra.Command{
 		Use:   "apply",
@@ -79,9 +85,10 @@ func init() {
 	ageKeyFlags(applyCmd, "age-key", ageKeyFileName)
 	configFileFlags(applyCmd)
 
-	applyCmd.Flags().Bool("dry-run", false, "Simulate an apply command and generate docker-compose.yaml without secrets")
-	applyCmd.Flags().Bool("pg-debug", false, "Enable debugging adpg-init container")
-	applyCmd.MarkFlagsMutuallyExclusive("dry-run", "pg-debug")
+	applyCmd.Flags().Bool("dry-run", false, "Simulate an apply command and generate compose files")
+	applyCmd.Flags().Bool("debug", false, "Enable debug in containers")
+	applyCmd.Flags().Bool("force", false, "Rewrite unseal data in x-secrets")
+	applyCmd.MarkFlagsMutuallyExclusive("dry-run", "debug")
 	applyCmd.Flags().StringP("output", "o", "", "Output filename")
 }
 
@@ -93,47 +100,26 @@ func applyProject(cmd *cobra.Command, _ []string) {
 	if err != nil {
 		logger.Fatal(err)
 	}
-	fillADCMLabels(prj)
 
 	dryRunMode := getBool(cmd, "dry-run")
+	debugMode := getBool(cmd, "debug")
+	force := getBool(cmd, "force")
 
-	ageKey, err := getAgeKey(cmd, "age-key")
+	var aes secrets.Secrets
+	if !dryRunMode {
+		aes, err = encoder(cmd, prj)
+		if err != nil {
+			logger.Fatal(err)
+		}
+	}
+
+	xSecrets, unMappedxSecrets, err := secretsDecrypt(prj.Services, aes)
 	if err != nil {
 		logger.Fatal(err)
 	}
 
-	dec, err := secrets.NewAgeCryptFromString(ageKey)
-	if err != nil {
-		logger.Fatal(err)
-	}
-
-	if xSecrets, ok := prj.Extensions[xsecretsKey].(*xsecrets); ok {
-		if xSecrets.AgeRecipient != dec.Recipient().String() {
-			logger.Fatal("age_recipient not match")
-		}
-
-		for k, v := range xSecrets.Data {
-			if !dryRunMode {
-				v, err = dec.DecryptValue(v)
-				if err != nil {
-					logger.Fatal(err)
-				}
-			}
-
-			prj.Environment[k] = v
-		}
-	}
-
-	var hasManagedServices bool
-	var adpgServiceName string
-	for svcName, svc := range prj.Services {
-		if svc.Labels[compose.ADAppTypeLabelKey] == "adpg" {
-			hasManagedServices = true
-			adpgServiceName = svcName
-		}
-	}
-
-	comp, err := compose.NewComposeService()
+	execBuf := new(bytes.Buffer)
+	comp, err := compose.NewComposeService(command.WithOutputStream(execBuf))
 	if err != nil {
 		logger.Fatal(err)
 	}
@@ -143,112 +129,219 @@ func applyProject(cmd *cobra.Command, _ []string) {
 		logger.Fatal(err)
 	}
 
-	helpers := compose.NewModHelpers()
-	for svcName, svc := range prj.Services {
-		svcType := svc.Labels[compose.ADAppTypeLabelKey]
-		if svcType == "adpg" && svc.ReadOnly {
-			mountOpt := "U"
-			if criInfo.OperatingSystem != "centos" {
-				uid, gid := "0", "0"
-				if len(svc.User) > 0 {
-					uidGid := strings.Split(svc.User, ":")
-					uid = uidGid[0]
-					if len(uidGid) > 1 {
-						gid = uidGid[1]
-					}
-				}
+	// https://github.com/moby/moby/blob/v27.5.1/daemon/archive_tarcopyoptions_unix.go#L16
+	// in dockerd v28.0.0 the bug with secrets copying has been fixed
+	serverVersionString := strings.SplitN(criInfo.ServerVersion, "~astra1", 2)[0]
+	var needSecretsFix bool
+	serverVersion, err := semver.NewVersion(serverVersionString)
+	if err != nil {
+		logger.Warnf("Cannot parse dockerd Server Version %s: %s", criInfo.ServerVersion, err)
+		needSecretsFix = true
+	} else {
+		needSecretsFix = serverVersion.LessThan(semver.MustParse("v28.0.0"))
+	}
 
-				mountOpt = fmt.Sprintf("uid=%s,gid=%s", uid, gid)
-			}
+	hostOS := criInfo.OperatingSystem
+	servicesModHelpers := helpers.NewModHelpers()
+	pgInit := types.NewPGInit()
+	_, managedAdpg := prj.Services[services.AdpgName]
 
-			mnt := fmt.Sprintf("/var/run/postgresql:%s", mountOpt)
-			helpers = append(helpers, compose.TmpFs(svcName, mnt))
+	for name, svc := range prj.Services {
+		if needSecretsFix {
+			svc.User = strings.SplitN(svc.User, ":", 2)[0]
 		}
 
-		var sslOpts *types.DbSSLOptions
-		if svcType == "adcm" {
-			if len(adpgServiceName) > 0 {
-				helpers = append(helpers,
-					compose.Environment(svcName,
-						compose.Env{Name: "DB_HOST", Value: &adpgServiceName},
-						compose.Env{Name: "DB_PORT", Value: utils.Ptr("5432")},
-					))
-			}
-
-			if optStr, ok := svc.Environment[pgSslOptEnvKey]; ok {
-				if err = json.Unmarshal([]byte(*optStr), &sslOpts); err != nil {
-					logger.Fatal(err)
-				}
-			}
+		// rename all svc.Secrets[*].Source
+		for i, sec := range svc.Secrets {
+			svc.Secrets[i].Source = name + "-" + sec.Source
 		}
+		prj.Services[name] = svc
 
-		var serviceSecrets []compose.Secret
-		for _, sec := range svc.Secrets {
-			envKey, ok := mapFlagsToEnv[sec.Source]
-			if !ok {
-				// TODO
-			}
+		servicesModHelpers = append(servicesModHelpers,
+			helpers.Profiles(name, services.PrimaryContainerProfile),
+		)
 
-			composeSec := compose.Secret{
-				Source: sec.Source,
-				EnvKey: envKey,
-				Value:  prj.Environment[sec.Source],
-				ENV:    len(envKey) > 0,
-			}
-
-			if sslOpts != nil {
-				if sec.Source == pgSslCaKey {
-					sslOpts.SSLRootCert = sec.Target
-				} else if sec.Source == pgSslCertKey {
-					sslOpts.SSLCert = sec.Target
-				} else if sec.Source == pgSslKeyKey {
-					var mode uint32 = 0o400
-					composeSec.FileMode = &mode
-					sslOpts.SSLKey = sec.Target
-				}
-			}
-
-			serviceSecrets = append(serviceSecrets, composeSec)
-		}
-
-		if sslOpts != nil {
-			optStr := sslOpts.String()
-			helpers = append(helpers,
-				compose.Environment(svcName, compose.Env{Name: pgSslOptEnvKey, Value: &optStr}),
+		appType := svc.Labels[compose.ADAppTypeLabelKey]
+		if appType != services.AdcmName {
+			servicesModHelpers = append(servicesModHelpers,
+				helpers.ContainerName(name),
 			)
 		}
 
-		helpers = append(helpers,
-			compose.Secrets(svcName, serviceSecrets...),
-			compose.Platform(svcName, compose.DefaultPlatform),
+		if appType == services.AdcmName {
+			sec := xSecrets[name]
+
+			for k, v := range sec {
+				envKey := mapFlagsToEnv[k]
+				secret := helpers.Secret{
+					Source: name + "-" + k,
+					Value:  v,
+					EnvKey: envKey,
+					Target: path.Join(helpers.SecretsPath, k),
+				}
+				if len(envKey) > 0 {
+					secret.EnvFileKey = envKey + "_FILE"
+				}
+				servicesModHelpers = append(servicesModHelpers,
+					helpers.Secrets(name, secret),
+					helpers.ProjectSecrets(secret),
+				)
+			}
+
+			if managedAdpg {
+				servicesModHelpers = append(servicesModHelpers,
+					helpers.Environment(name,
+						helpers.Env{Name: "DB_HOST", Value: utils.Ptr(services.AdpgName)},
+						helpers.Env{Name: "DB_PORT", Value: utils.Ptr("5432")},
+					),
+				)
+
+				fillPgInitFile(pgInit, sec)
+			}
+
+		} else if name == services.AdpgName {
+			if svc.ReadOnly {
+				mntOpts := mountOpt(hostOS, svc.User)
+				mntOpts["size"] = "65536"
+				mntOpts["mode"] = "1750"
+
+				servicesModHelpers = append(servicesModHelpers, helpers.MountTmpFs(name,
+					helpers.TmpFs{Target: "/var/run/postgresql", MountOptions: mntOpts}))
+			}
+
+		} else if name == services.VaultName {
+			vaultMode := svc.Labels[compose.ADVaultModeLabelKey]
+			if len(vaultMode) > 0 && vaultMode != services.VaultDeployModeDev {
+				var target string
+				for _, sec := range svc.Secrets {
+					if sec.Source == name+"-"+services.ConfigJson {
+						target = sec.Target
+						break
+					}
+				}
+
+				servicesModHelpers = append(servicesModHelpers,
+					helpers.Entrypoint(name, "bao", "server", "-config="+target))
+
+				if managedAdpg {
+					sec := xSecrets[name]
+					unMap := unMappedxSecrets[name]
+
+					for k, v := range sec {
+						if k == services.ConfigJson {
+							var configFile services.VaultConfigFile
+							if err = json.Unmarshal([]byte(v), &configFile); err != nil {
+								logger.Fatal(err)
+							}
+
+							u, err := url.Parse(configFile.Storage.Postgresql.ConnectionUrl)
+							if err != nil {
+								logger.Fatal(err)
+							}
+
+							u.Path = unMap[services.PgDbName]
+							u.User = url.UserPassword(unMap[services.PgDbUser], unMap[services.PgDbPass])
+
+							configFile.Storage.Postgresql.ConnectionUrl = u.String()
+							b, err := json.Marshal(configFile)
+							if err != nil {
+								logger.Fatal(err)
+							}
+							v = string(b)
+						}
+
+						s := helpers.Secret{
+							Source: name + "-" + k,
+							Value:  v,
+							Target: path.Join(helpers.SecretsPath, k),
+						}
+
+						servicesModHelpers = append(servicesModHelpers,
+							helpers.ProjectSecrets(s),
+						)
+					}
+
+					fillPgInitFile(pgInit, unMap)
+				}
+			}
+		}
+	}
+
+	if managedAdpg {
+		svc := prj.Services[services.AdpgName]
+
+		// TODO: helper addService to project
+		chownName := services.ChownContainer(prj, svc)
+		initAdpgServiceName := services.InitContainer(prj, svc)
+
+		// set secrets for init-adpg container
+		for k, v := range xSecrets[services.AdpgName] {
+			source := services.AdpgName + "-" + k
+			s := helpers.Secret{
+				Source:     source,
+				EnvFileKey: mapFlagsToEnv[source],
+				Value:      v,
+				Target:     path.Join(helpers.SecretsPath, k),
+			}
+			servicesModHelpers = append(servicesModHelpers,
+				helpers.Secrets(initAdpgServiceName, s),
+				helpers.ProjectSecrets(s),
+			)
+		}
+
+		servicesModHelpers = append(servicesModHelpers,
+			helpers.Command(initAdpgServiceName, []string{"initdb"}),
+			helpers.Environment(initAdpgServiceName,
+				helpers.Env{
+					Name:  "PG_ENTRYPOINT_LOG_DEBUG",
+					Value: utils.Ptr("true"),
+				},
+				helpers.Env{
+					Name:  "POSTGRES_SHUTDOWN_MODE",
+					Value: utils.Ptr("smart"),
+				},
+			),
+			helpers.DependsOn(initAdpgServiceName,
+				helpers.Depended{
+					Service:   chownName,
+					Condition: composeTypes.ServiceConditionCompletedSuccessfully,
+					Required:  true,
+				}),
+		)
+
+		// generate init.json for init-adpg
+		if len(pgInit.DB) > 0 || len(pgInit.Role) > 0 {
+			initJson, err := json.Marshal(pgInit)
+			if err != nil {
+				logger.Fatal(err)
+			}
+
+			secret := helpers.Secret{
+				Source:     services.AdpgName + "-init.json",
+				Target:     path.Join(helpers.SecretsPath, "init.json"),
+				EnvFileKey: "POSTGRES_INITDB_FILE",
+				Value:      string(initJson),
+			}
+			servicesModHelpers = append(servicesModHelpers,
+				helpers.Secrets(initAdpgServiceName, secret),
+				helpers.ProjectSecrets(secret),
+			)
+		}
+	}
+
+	for name, svc := range prj.Services {
+		servicesModHelpers = append(servicesModHelpers,
+			helpers.Platform(name, compose.DefaultPlatform),
+			helpers.CustomLabels(name, map[string]string{compose.ADLabel: ""}),
+			helpers.SecretsPermission(name, parseUidGidFromUser(svc.User)),
 		)
 	}
 
-	if err = helpers.Run(prj); err != nil {
+	if err = servicesModHelpers.Apply(prj); err != nil {
 		logger.Fatal(err)
 	}
 
-	pgDebug := getBool(cmd, "pg-debug")
-	var projectInit *composeTypes.Project
-	if hasManagedServices {
-		projectInit, err = newInitProject(prj, pgDebug)
-		if err != nil {
-			logger.Fatal(err)
-		}
-		fillADCMLabels(projectInit)
-	}
-
-	// compose.Up(projectInit)
-	// chown/init
-	// init vault (vault operator init -key-shares=1 -key-threshold=1 -format=json > keys.json)
-	// write keys.json to x-secrets
-	// wait for all containers stopped
-	// compose.Down(projectInit) w/o delete volumes
-	// compose.Up(prj)
-
-	if err = assets.LoadBusyboxImage(cmd.Context()); err != nil {
-		logger.Fatal(err)
-	}
+	services.PauseContainer(prj)
 
 	if dryRunMode {
 		closer, err := setOutput(cmd)
@@ -261,331 +354,237 @@ func applyProject(cmd *cobra.Command, _ []string) {
 		defer func() { _ = enc.Close() }()
 
 		enc.SetIndent(2)
-		if projectInit != nil {
-			_ = enc.Encode(projectInit)
-			_ = enc.Encode(projectInit.Environment)
-		}
 		_ = enc.Encode(prj)
 		_ = enc.Encode(prj.Environment)
 		return
 	}
 
-	if projectInit != nil {
-		if err = comp.Up(cmd.Context(), projectInit); err != nil {
-			logger.Fatal(err)
-		}
-
-		if pgDebug {
-			return
-		}
-
-		if err = comp.Down(cmd.Context(), projectInit.Name, false); err != nil {
-			logger.Fatal(err)
-		}
-	}
-
-	if err = comp.Up(cmd.Context(), prj); err != nil {
+	initPrj, err := prj.WithProfiles([]string{services.InitContainerProfile})
+	if err != nil {
 		logger.Fatal(err)
 	}
-}
 
-func findFiles(names []string, pwd string) []string {
-	var candidates []string
-	for _, n := range names {
-		f := filepath.Join(pwd, n)
-		if _, err := os.Stat(f); err == nil {
-			candidates = append(candidates, f)
-		}
-	}
-	return candidates
-}
-
-func readConfigFile(conf string) (*composeTypes.Project, error) {
-	opts := dockerCompose.ProjectOptions{
-		Offline: true,
-	}
-	var sec *xsecrets
-	projectOpts := []cli.ProjectOptionsFn{
-		cli.WithConsistency(false),
-		cli.WithDotEnv,
-		WithConfigFileEnv,
-		WithEnvFiles(opts.EnvFiles...),
-		cli.WithExtension(xsecretsKey, sec),
-	}
-
-	if len(conf) > 0 {
-		opts.ConfigPaths = []string{conf}
-	} else {
-		projectOpts = append(projectOpts, WithDefaultConfigPath)
-	}
-
-	prj, _, err := opts.ToProject(context.Background(), nil, nil, projectOpts...)
-
-	return prj, err
-}
-
-// WithConfigFileEnv allow to set compose config file paths by ARENADATA_APP_FILE environment variable
-func WithConfigFileEnv(o *cli.ProjectOptions) error {
-	if len(o.ConfigPaths) > 0 {
-		return nil
-	}
-	sep := o.Environment[PathSeparator]
-	if sep == "" {
-		sep = string(os.PathListSeparator)
-	}
-	f, ok := o.Environment[FilePath]
-	if ok {
-		paths, err := absolutePaths(strings.Split(f, sep))
-		o.ConfigPaths = paths
-		return err
-	}
-	return nil
-}
-
-func absolutePaths(p []string) ([]string, error) {
-	var paths []string
-	for _, f := range p {
-		if f == "-" {
-			paths = append(paths, f)
-			continue
-		}
-		abs, err := filepath.Abs(f)
+	defer func() {
 		if err != nil {
-			return nil, err
+			logger.Fatal(err)
 		}
-		f = abs
-		if _, err := os.Stat(f); err != nil {
-			return nil, err
+	}()
+
+	if len(initPrj.Services) > 0 {
+		if err := assets.LoadBusyboxImage(cmd.Context()); err != nil {
+			logger.Fatal(err)
 		}
-		paths = append(paths, f)
+		if err := comp.Up(cmd.Context(), initPrj, true); err != nil {
+			logger.Fatal(err)
+		}
+
+		defer func() {
+			if !debugMode {
+				err := comp.Remove(cmd.Context(), initPrj, initPrj.ServiceNames()...)
+				if err != nil {
+					log.Warnf("Removing init containers failed: %v", err)
+				}
+			}
+		}()
 	}
-	return paths, nil
+
+	eg, _ := errgroup.WithContext(cmd.Context())
+	if _, ok := prj.Services[services.VaultName]; ok {
+		eg.Go(func() error {
+			return vaultInit(cmd.Context(), prj, comp, aes, force)
+		})
+	}
+
+	containerName := getContainerNameIfItIsRunning(cmd.Context(), comp, prj.Name)
+	if force && len(containerName) > 0 {
+		time.Sleep(5 * time.Second)
+	}
+
+	err = comp.Up(cmd.Context(), prj, true)
+
+	if e := eg.Wait(); e != nil {
+		if err == nil {
+			err = e
+		} else {
+			err = fmt.Errorf("%v: %v", err, e)
+		}
+	}
 }
 
-// WithDefaultConfigPath searches for default config files from working directory
-func WithDefaultConfigPath(o *cli.ProjectOptions) error {
-	if len(o.ConfigPaths) > 0 {
-		return nil
+func getContainerNameIfItIsRunning(ctx context.Context, comp *compose.Compose, prjName string) string {
+	lst, _ := comp.List(ctx, false)
+	for _, l := range lst {
+		lbl := l.Labels
+		if lbl[api.ProjectLabel] == prjName &&
+			lbl[api.ServiceLabel] == services.VaultName &&
+			l.State == "running" {
+			return strings.Trim(l.Names[0], "/")
+		}
 	}
-	pwd, err := o.GetWorkingDir()
+	return ""
+}
+
+func vaultInit(ctx context.Context, prj *composeTypes.Project, comp *compose.Compose, aes secrets.Secrets, force bool) error {
+	output := prj.ComposeFiles[0]
+	var adcmYaml map[string]any
+	b, err := os.ReadFile(output)
 	if err != nil {
 		return err
 	}
-	for {
-		candidates := findFiles(fileNames, pwd)
-		if len(candidates) > 0 {
-			winner := candidates[0]
-			if len(candidates) > 1 {
-				log.Warnf("Found multiple config files with supported names: %s", strings.Join(candidates, ", "))
-				log.Warnf("Using %s", winner)
-			}
-			o.ConfigPaths = append(o.ConfigPaths, winner)
-
-			return nil
-		}
-		parent := filepath.Dir(pwd)
-		if parent == pwd {
-			// no config file found, but that's not a blocker if caller only needs project name
-			return nil
-		}
-		pwd = parent
+	if err = yaml.Unmarshal(b, &adcmYaml); err != nil {
+		return err
 	}
-}
 
-// WithEnvFiles set env file(s) to be loaded to set project environment.
-// defaults to local .env file if no explicit file is selected, until ARENADATA_APP_DISABLE_ENV_FILE is set
-func WithEnvFiles(file ...string) cli.ProjectOptionsFn {
-	return func(o *cli.ProjectOptions) error {
-		if len(file) > 0 {
-			o.EnvFiles = file
-			return nil
-		}
-		if v, ok := os.LookupEnv(DisableDefaultEnvFile); ok {
-			b, err := strconv.ParseBool(v)
-			if err != nil {
-				return err
+	var containerName string
+	var count int
+	tik := time.NewTicker(2 * time.Second)
+
+OUT:
+	for {
+		select {
+		case <-tik.C:
+			if count == 15 {
+				tik.Stop()
+				return fmt.Errorf("vault init timed out")
 			}
-			if b {
-				return nil
+
+			count++
+			containerName = getContainerNameIfItIsRunning(ctx, comp, prj.Name)
+			if len(containerName) > 0 {
+				tik.Stop()
+				break OUT
 			}
 		}
+	}
 
-		wd, err := o.GetWorkingDir()
-		if err != nil {
-			return err
-		}
-		defaultDotEnv := filepath.Join(wd, ".env")
+	unsealRunner, err := image.New(containerName)
+	if err != nil {
+		return err
+	}
 
-		s, err := os.Stat(defaultDotEnv)
-		if os.IsNotExist(err) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		if !s.IsDir() {
-			o.EnvFiles = []string{defaultDotEnv}
-		}
+	status, err := unsealRunner.Status(ctx)
+	if err != nil {
+		return fmt.Errorf("read vault status failed: %v", err)
+	}
+
+	if !status.Sealed {
 		return nil
 	}
-}
 
-func newInitProject(project *composeTypes.Project, pgDebug bool) (*composeTypes.Project, error) {
-	helpers := compose.NewModHelpers()
-	projectInit := &composeTypes.Project{
-		Name:        project.Name,
-		Services:    composeTypes.Services{},
-		Environment: project.Environment,
-		Secrets:     project.Secrets,
-		Volumes:     project.Volumes,
-	}
-
-	var adpgInitServiceName string
-	pgInit := types.NewPGInit()
-	for svcName, svc := range project.Services {
-		svcType := svc.Labels[compose.ADAppTypeLabelKey]
-
-		var chownServiceName string
-		if len(svc.User) > 0 && len(svc.Volumes) > 0 {
-			var mounts []string
-			for _, mnt := range svc.Volumes {
-				mounts = append(mounts, mnt.Target)
+	var unsealDataRaw string
+	unMappedData := get(adcmYaml, []string{"services", services.VaultName, "x-secrets", "un-mapped"})
+	unsealDataEnc, unsealDataIsExists := unMappedData[services.VaultUnsealData]
+	if unsealDataIsExists {
+		if aes != nil {
+			if unsealDataRaw, err = aes.DecryptValue(unsealDataEnc.(string)); err != nil {
+				return fmt.Errorf("decrypt vault init data failed: %v", err)
 			}
-
-			chownServiceName = "chown-" + svcName
-			dirs := strings.Join(mounts, " ")
-			projectInit.Services[chownServiceName] = composeTypes.ServiceConfig{
-				User:       "0:0",
-				Image:      assets.ImageName,
-				Entrypoint: composeTypes.ShellCommand{"/bin/sh"},
-				Command: []string{
-					"-cex",
-					fmt.Sprintf("chown %s %s", svc.User, dirs),
-				},
-				Volumes: svc.Volumes,
-			}
-		}
-
-		switch svcType {
-		case "adcm":
-			dbName := projectInit.Environment["adcm-db-name"]
-			dbOwner := projectInit.Environment["adcm-db-user"]
-			pgInit.DB[dbName] = &types.Database{
-				Owner: dbOwner,
-			}
-			pgInit.Role[dbOwner] = &types.Role{
-				Password: projectInit.Environment["adcm-db-pass"],
-			}
-		case "adpg":
-			adpgInitServiceName = "init-" + svcName
-			svcConf := composeTypes.ServiceConfig{
-				User:    svc.User,
-				Image:   svc.Image,
-				Command: []string{"initdb"},
-				Volumes: svc.Volumes,
-				Secrets: svc.Secrets,
-				Environment: composeTypes.MappingWithEquals{
-					"PG_ENTRYPOINT_LOG_DEBUG": utils.Ptr("true"),
-				},
-			}
-			if pgDebug {
-				svcConf.Environment["PG_ENTRYPOINT_INIT_DEBUG"] = utils.Ptr("true")
-			}
-			projectInit.Services[adpgInitServiceName] = svcConf
-
-			helpers = append(helpers, compose.Secrets(adpgInitServiceName, compose.Secret{
-				Source: "adpg-password",
-				EnvKey: "POSTGRES_PASSWORD",
-				ENV:    false,
-			}))
-
-			if len(chownServiceName) > 0 && !pgDebug {
-				helpers = append(helpers,
-					compose.DependsOn(adpgInitServiceName,
-						compose.Depended{
-							Service:   chownServiceName,
-							Condition: composeTypes.ServiceConditionCompletedSuccessfully,
-						}),
-				)
-			}
-		//case "consul":
-		case "vault":
-			//dbName := project.Environment["vault-db-name"]
-			//dbOwner := project.Environment["vault-db-user"]
-			//pgInit.DB[dbName] = &types.Database{
-			//	Owner: dbOwner,
-			//}
-			//pgInit.Role[dbOwner] = &types.Role{
-			//	Password: project.Environment["vault-db-pass"],
-			//}
+		} else {
+			unsealDataRaw = unsealDataEnc.(string)
 		}
 	}
 
-	if len(pgInit.DB) > 0 || len(pgInit.Role) > 0 {
-		initJson, err := json.Marshal(pgInit)
+	var unsealData *unseal.VaultInitData
+	if !status.Initialized {
+		if unsealDataIsExists && !force {
+			return fmt.Errorf("you are trying unseal Vault/Openbao with uninitialized data. "+
+				"Remove the services.%s.x-secrets.un-mapped.%s key mannualy before call apply command. "+
+				"Or rerun the command with --force flag, then unseal data will be overwritten",
+				services.VaultName, services.VaultUnsealData)
+		}
+
+		ud, err := unsealRunner.RawInitData(ctx)
 		if err != nil {
-			return nil, err
+			return err
+		}
+		unsealDataRaw = string(ud)
+
+		if aes != nil {
+			if unsealDataEnc, err = aes.EncryptValue(unsealDataRaw); err != nil {
+				// this shouldn't happen, but https://go.dev/issue/66821
+				return fmt.Errorf("encrypt vault init data failed: %v", err)
+			}
 		}
 
-		helpers = append(helpers, compose.Secrets(adpgInitServiceName, compose.Secret{
-			Source: "init.json",
-			EnvKey: "POSTGRES_INITDB",
-			Value:  string(initJson),
-			ENV:    false,
-		}))
+		unMappedData[services.VaultUnsealData] = unsealDataEnc
+
+		buf := new(bytes.Buffer)
+		enc := yaml.NewEncoder(buf)
+		enc.SetIndent(2)
+
+		if err = enc.Encode(adcmYaml); err != nil {
+			// this shouldn't happen, but if it does, print the unseal data
+			log.Warnf("unseal data: %s", unsealDataEnc)
+			return fmt.Errorf("marshal compose file failed: %v", err)
+		}
+
+		if err = os.WriteFile(output, buf.Bytes(), 0600); err != nil {
+			return fmt.Errorf("write vault init data to adcm.yaml file failed: %v", err)
+		}
 	}
 
-	const pauseContainerName = "pause"
-	var deps []compose.Depended
-	for svcName := range projectInit.Services {
-		deps = append(deps, compose.Depended{Service: svcName, Condition: composeTypes.ServiceConditionCompletedSuccessfully})
-	}
-	helpers = append(helpers, compose.DependsOn(pauseContainerName, deps...))
-
-	projectInit.Services[pauseContainerName] = composeTypes.ServiceConfig{
-		Name:       pauseContainerName,
-		Image:      assets.ImageName,
-		Command:    []string{"sleep", "120"},
-		StopSignal: "SIGKILL",
+	if err = json.Unmarshal([]byte(unsealDataRaw), &unsealData); err != nil {
+		return fmt.Errorf("unmarshal unseal data failed: %v", err)
 	}
 
-	if err := helpers.Run(projectInit); err != nil {
-		return nil, err
+	if err = unsealRunner.Unseal(ctx, unsealData.UnsealKeysB64); err != nil {
+		return err
 	}
 
-	fillProjectFields(projectInit)
-
-	return projectInit, nil
+	return nil
 }
 
-func fillProjectFields(project *composeTypes.Project) {
-	for name, s := range project.Services {
-		s.Name = name
-
-		if s.CustomLabels == nil {
-			s.CustomLabels = map[string]string{}
-		}
-
-		s.CustomLabels[api.ProjectLabel] = project.Name
-		s.CustomLabels[api.ServiceLabel] = name
-		s.CustomLabels[api.VersionLabel] = api.ComposeVersion
-		s.CustomLabels[api.WorkingDirLabel] = project.WorkingDir
-		s.CustomLabels[api.ConfigFilesLabel] = strings.Join(project.ComposeFiles, ",")
-		s.CustomLabels[api.OneoffLabel] = "False"
-
-		project.Services[name] = s
+func get(m map[string]any, key []string) map[string]any {
+	x := m
+	for _, k := range key {
+		v := x[k]
+		x = v.(map[string]any)
 	}
+	return x
 }
 
-func fillADCMLabels(project *composeTypes.Project) {
-	for name, s := range project.Services {
-		s.Name = name
+func mountOpt(sys, user string) helpers.Mapping {
+	opts := helpers.Mapping{}
+	// podman
+	if sys == "centos" {
+		opts["U"] = ""
+		return opts
+	}
 
-		if s.CustomLabels == nil {
-			s.CustomLabels = map[string]string{}
+	if len(user) > 0 {
+		usr := parseUidGidFromUser(user)
+		opts["uid"] = usr.UID
+		if len(usr.GID) > 0 {
+			opts["gid"] = usr.GID
 		}
-		s.CustomLabels[compose.ADLabel] = ""
+	}
 
-		project.Services[name] = s
+	return opts
+}
+
+func parseUidGidFromUser(u string) helpers.Secret {
+	sec := helpers.Secret{}
+	userParts := strings.Split(u, ":")
+	sec.UID = userParts[0]
+	if len(userParts) > 1 {
+		sec.GID = userParts[1]
+	}
+	return sec
+}
+
+func fillPgInitFile(pg *types.PGInit, sec map[string]string) {
+	dbUser := sec[services.PgDbUser]
+	if len(dbUser) > 0 {
+		pg.Role[dbUser] = &types.Role{
+			Password: sec[services.PgDbPass],
+		}
+	}
+
+	dbName := sec[services.PgDbName]
+	if len(dbName) > 0 {
+		pg.DB[dbName] = nil
+		if len(dbUser) > 0 {
+			pg.DB[dbName] = &types.Database{Owner: dbUser}
+		}
 	}
 }

@@ -13,23 +13,19 @@
  limitations under the License.
 */
 
-package compose
+package services
 
 const (
-	DefaultPlatform = "linux/amd64"
+	ADCMImage                 = "hub.arenadata.io/adcm/adcm"
+	ADCMTag                   = "2.6.0"
+	ADCMPublishPort    uint16 = 8000
+	ADCMPublishSSLPort uint16 = 8443
+	ADCMMountPath             = "/adcm/data"
 
-	ADLabel           = "app.arenadata.io"
-	ADAppTypeLabelKey = ADLabel + "/type"
-
-	SecretsPath = "/run/csecrets"
-
-	ADCMImage              = "hub.arenadata.io/adcm/adcm"
-	ADCMTag                = "2.6.0"
-	ADCMPublishPort uint16 = 8000
-
-	ADPGImage              = "hub.arenadata.io/adcm/postgres"
-	ADPGTag                = "v16.3.1"
-	ADPGPublishPort uint16 = 5432
+	ADPGImage                = "hub.arenadata.io/adcm/postgres"
+	ADPGTag                  = "v16.3.1"
+	ADPGPublishPort   uint16 = 5432
+	ADPGDataMountPath        = "/data"
 
 	ConsulImage              = "hub.arenadata.io/adcm/consul"
 	ConsulTag                = "v0.0.0"

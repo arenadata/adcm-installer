@@ -17,6 +17,7 @@ package cmd
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path"
 	"runtime"
@@ -26,7 +27,8 @@ import (
 )
 
 var (
-	version = "1.0.0-dev"
+	version = "1.0.0"
+	commit  = "dev"
 	RootCmd = rootCmd
 )
 
@@ -35,7 +37,7 @@ var rootCmd = &cobra.Command{
 	Short: "Command line tool for installing Arenadata products",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if getBool(cmd, "version") {
-			cmd.Println(version)
+			cmd.Printf("%s (%s)\n", version, commit)
 			componentsUpdate(cmd, args)
 			return nil
 		}
@@ -79,4 +81,19 @@ func configFileFlags(cmd *cobra.Command) {
 func getBool(cmd *cobra.Command, key string) bool {
 	ok, _ := cmd.Flags().GetBool(key)
 	return ok
+}
+
+func setOutput(cmd *cobra.Command) (io.Closer, error) {
+	outputPath, _ := cmd.Flags().GetString("output")
+	if len(outputPath) == 0 || outputPath == "-" {
+		return os.Stdout, nil
+	}
+
+	output, err := os.OpenFile(outputPath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0640)
+	if err != nil {
+		return nil, err
+	}
+
+	cmd.SetOut(output)
+	return output, nil
 }

@@ -1,0 +1,7 @@
+go 1.24.0
+use (
+	.
+	pkg/vault/unseal/host
+	pkg/vault/unseal/image
+	pkg/vault/unseal/api
+)

@@ -16,7 +16,7 @@
 package cmd
 
 import (
-	"github.com/arenadata/adcm-installer/pkg/compose"
+	"github.com/arenadata/adcm-installer/internal/services"
 	"github.com/arenadata/adcm-installer/pkg/registry-client"
 
 	"github.com/blang/semver/v4"
@@ -43,7 +43,7 @@ func init() {
 func listVersions(cmd *cobra.Command, _ []string) {
 	logger := log.WithField("command", "adcm-versions")
 
-	distributionRef, err := reference.ParseNormalizedNamed(compose.ADCMImage)
+	distributionRef, err := reference.ParseNormalizedNamed(services.ADCMImage)
 	if err != nil {
 		logger.Fatal(err)
 	}

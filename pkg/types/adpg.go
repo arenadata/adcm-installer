@@ -32,8 +32,8 @@ type PGInit struct {
 	Role map[string]*Role     `json:"role,omitempty" yaml:"role,omitempty"`
 }
 
-func NewPGInit() PGInit {
-	return PGInit{
+func NewPGInit() *PGInit {
+	return &PGInit{
 		DB:   make(map[string]*Database),
 		Role: make(map[string]*Role),
 	}

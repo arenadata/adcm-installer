@@ -1,5 +1,5 @@
 SHORT_COMMIT := $(shell git describe --always)
-VERSION ?= $(shell git describe --tags --abbrev=0 2>/dev/null || echo "0.0.0-$(SHORT_COMMIT)" | tr -d '\n')
+VERSION ?= $(shell git describe --tags --abbrev=0 2>/dev/null || echo "0.0.0" | tr -d '\n')
 GOOS ?= $(shell go env GOOS)
 GOARCH ?= $(shell go env GOARCH)
 CGO_ENABLED := 0
@@ -12,7 +12,7 @@ endif
 
 build: assets/busybox.tar
 	@echo "Build adcm-installer"
-	@CGO_ENABLED=$(CGO_ENABLED) GOOS=$(GOOS) GOARCH=$(GOARCH) go build -o bin/adi -trimpath -ldflags "-X github.com/arenadata/adcm-installer/cmd.version=$(VERSION) -w -s" main.go
+	@CGO_ENABLED=$(CGO_ENABLED) GOOS=$(GOOS) GOARCH=$(GOARCH) go build -o bin/adi -trimpath -ldflags "-X github.com/arenadata/adcm-installer/cmd.version=$(VERSION) -X github.com/arenadata/adcm-installer/cmd.commit=$(SHORT_COMMIT) -w -s" main.go
 
 all: test
 	@$(MAKE) build

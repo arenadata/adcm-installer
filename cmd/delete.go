@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	"github.com/arenadata/adcm-installer/pkg/compose"
+	composeTypes "github.com/compose-spec/compose-go/v2/types"
 
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -68,25 +69,24 @@ func deleteProject(cmd *cobra.Command, args []string) {
 		if err != nil {
 			logger.Fatal(err)
 		}
-		if strings.TrimSpace(resp) != "y" {
+		if strings.ToLower(strings.TrimSpace(resp)) != "y" {
 			fmt.Println("Aborting...")
 			return
 		}
 	}
 
-	var name string
+	prj := &composeTypes.Project{}
 	if len(args) > 0 {
-		name = args[0]
+		prj.Name = args[0]
 	} else {
 		configFilePath, _ := cmd.Flags().GetString("file")
-		prj, err := readConfigFile(configFilePath)
+		prj, err = readConfigFile(configFilePath)
 		if err != nil {
 			logger.Fatal(err)
 		}
-		name = prj.Name
 	}
 
-	if err = comp.Down(cmd.Context(), name, deleteVolumes); err != nil {
+	if err = comp.Down(cmd.Context(), prj, deleteVolumes); err != nil {
 		logger.Fatal(err)
 	}
 }

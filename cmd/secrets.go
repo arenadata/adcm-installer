@@ -18,14 +18,17 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
+	"github.com/arenadata/adcm-installer/internal/services"
 	"github.com/arenadata/adcm-installer/pkg/secrets"
 	"github.com/arenadata/adcm-installer/pkg/utils"
 
-	"github.com/gosimple/slug"
+	composeTypes "github.com/compose-spec/compose-go/v2/types"
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -49,7 +52,6 @@ func init() {
 }
 
 func ageEnvKey(key string) string {
-	key = slug.Make(key)
 	key = strings.ToUpper(key)
 	return strings.ReplaceAll(key, "-", "_")
 }
@@ -82,7 +84,10 @@ func ageKeyFlags(cmd *cobra.Command, key, defaultKeyPath string, markFlags ...fu
 func getAgeKey(cmd *cobra.Command, key string) (string, error) {
 	ageKey, _ := cmd.Flags().GetString(key)
 	if len(ageKey) == 0 {
-		ageKey = os.Getenv(ageEnvKey(key))
+		envKey := ageEnvKey(key)
+		if ageKey = os.Getenv(envKey); len(ageKey) > 0 {
+			_ = os.Unsetenv(envKey)
+		}
 	}
 
 	fileKey := key + "-file"
@@ -134,4 +139,46 @@ func readOrCreateNewAgeKey(cmd *cobra.Command, key string) (*secrets.AgeCrypt, b
 
 	cryptKey, err := secrets.NewAgeCrypt()
 	return cryptKey, true, err
+}
+
+func toYaml(output io.Writer, v any) (err error) {
+	enc := yaml.NewEncoder(output)
+	defer func() {
+		if e := enc.Close(); e != nil {
+			err = e
+		}
+	}()
+
+	enc.SetIndent(2)
+	return enc.Encode(v)
+}
+
+func encoder(cmd *cobra.Command, prj *composeTypes.Project) (secrets.Secrets, error) {
+	xSecrets, ok := prj.Extensions[services.XSecretsKey]
+	if ok {
+		sec := xSecrets.(*services.XSecrets)
+
+		ageKey, err := getAgeKey(cmd, "age-key")
+		if err != nil {
+			return nil, err
+		}
+
+		dec, err := secrets.NewAgeCryptFromString(ageKey)
+		if err != nil {
+			return nil, err
+		}
+
+		if sec.AgeRecipient != dec.Recipient().String() {
+			return nil, fmt.Errorf("age_recipient not match")
+		}
+
+		aesKey, err := dec.Decrypt(sec.Key)
+		if err != nil {
+			return nil, err
+		}
+
+		return secrets.NewAesCrypt([]byte(aesKey))
+	}
+
+	return nil, nil
 }
