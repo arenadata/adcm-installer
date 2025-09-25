@@ -82,7 +82,7 @@ func initCmdFlags(cmd *cobra.Command) {
 
 	f.Uint8("adcm-count", 1, "Set number of ADCM instances")
 	f.Bool(services.AdpgName, false, "Use managed ADPG")
-	f.Bool(services.ConsulName, false, "Use managed Consul (Alpha)")
+	f.Bool(services.ConsulName, false, "Use managed Consul (Dev-mode)")
 	f.Bool(services.VaultName, false, "Use managed Vault")
 	f.Bool("force", false, "Force overwrite existing config file")
 	f.BoolP("interactive", "i", false, "Interactive mode")

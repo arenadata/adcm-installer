@@ -17,7 +17,7 @@ package services
 
 const (
 	ADCMImage                 = "hub.arenadata.io/adcm/adcm"
-	ADCMTag                   = "2.6.0"
+	ADCMTag                   = "2.7.1"
 	ADCMPublishPort    uint16 = 8000
 	ADCMPublishSSLPort uint16 = 8443
 	ADCMMountPath             = "/adcm/data"
@@ -28,7 +28,7 @@ const (
 	ADPGDataMountPath        = "/data"
 
 	ConsulImage              = "hub.arenadata.io/adcm/consul"
-	ConsulTag                = "v0.0.0"
+	ConsulTag                = "v1.0.0"
 	ConsulPublishPort uint16 = 8500
 
 	VaultImage              = "openbao/openbao"

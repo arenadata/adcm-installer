@@ -59,17 +59,17 @@ adi init adcm-project --from-config config.yaml
 | adcm-ssl-cert-file     | string     |                                | ADCM SSL Certificate file path           |
 | adcm-ssl-key-file      | string     |                                | ADCM SSL Private Key file path           |
 | adcm-image             | string     | hub.arenadata.io/adcm/adcm     | ADCM image                               |
-| adcm-tag               | string     | 2.6.0                          | ADCM image tag                           |
+| adcm-tag               | string     | 2.7.1                          | ADCM image tag                           |
 | adcm-publish-port      | uint16     | 8000                           | ADCM publish port                        |
 | adcm-publish-ssl-port  | uint16     | 8443                           | ADCM publish SSL port                    |
 | adcm-url               | string     | computed                       | ADCM url                                 |
 | adcm-volume            | string     | adcm                           | ADCM volume name or path                 |
 | adpg-pass              | string     | random generated               | ADPG superuser password                  |
 | adpg-image             | string     | hub.arenadata.io/adcm/postgres | ADPG image                               |
-| adpg-tag               | string     | v16.4_arenadata1               | ADPG image tag                           |
+| adpg-tag               | string     | v16.3.1                        | ADPG image tag                           |
 | adpg-publish-port      | uint16     |                                | ADPG publish port                        |
 | consul-image           | string     | hub.arenadata.io/adcm/consul   | Consul image                             |
-| consul-tag             | string     | v0.0.0                         | Consul image tag                         |
+| consul-tag             | string     | v1.0.0                         | Consul image tag                         |
 | consul-publish-port    | uint16     | 8500                           | Consul publish port                      |
 | vault-db-host          | string     |                                | Vault database host                      |
 | vault-db-port          | uint16     | 5432                           | Vault database port                      |
