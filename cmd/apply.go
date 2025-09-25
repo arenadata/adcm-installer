@@ -264,6 +264,15 @@ func applyProject(cmd *cobra.Command, _ []string) {
 					fillPgInitFile(pgInit, unMap)
 				}
 			}
+		} else if name == services.ConsulName {
+			mntOpts := mountOpt(hostOS, svc.User)
+			mntOpts["size"] = "1048576"
+			mntOpts["mode"] = "1750"
+
+			servicesModHelpers = append(servicesModHelpers,
+				helpers.ReadOnlyRootFilesystem(services.ConsulName),
+				helpers.MountTmpFs(name, helpers.TmpFs{Target: "/data", MountOptions: mntOpts}),
+			)
 		}
 	}
 

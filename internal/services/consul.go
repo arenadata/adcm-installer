@@ -28,7 +28,6 @@ type ConsulConfig struct {
 	Image       string `yaml:"consul-image"`
 	Tag         string `yaml:"consul-tag"`
 	PublishPort uint16 `yaml:"consul-publish-port"`
-	Volume      string `yaml:"consul-volume"`
 }
 
 func (prj *Project) consul() {
@@ -40,22 +39,16 @@ func (prj *Project) consul() {
 	name := ConsulName
 	addService(name, prj.prj)
 
-	hostname := prj.hostname(name)
-	if len(config.Volume) == 0 {
-		config.Volume = hostname
-	}
-
 	if prj.interactive {
 		checkErr(readValue(&config.Image, &prompt{msg: "Consul image", def: config.Image}))
 		checkErr(readValue(&config.Tag, &prompt{msg: "Consul image tag", def: config.Tag}))
 
 		portStr := strconv.Itoa(int(config.PublishPort))
 		checkErr(readValue(&config.PublishPort, &prompt{msg: "Consul publish port", def: portStr}))
-		checkErr(readValue(&config.Volume, &prompt{msg: "Consul volume name or path", def: config.Volume}))
 	}
 
 	prj.AppendHelpers(
-		helpers.Hostname(name, hostname),
+		helpers.Hostname(name, prj.hostname(name)),
 		helpers.Command(name, []string{"agent", "-dev", "-bind=0.0.0.0"}),
 		helpers.Image(name, config.Image+":"+config.Tag),
 		helpers.Labels(name, map[string]string{compose.ADAppTypeLabelKey: ConsulName}),
