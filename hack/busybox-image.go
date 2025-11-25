@@ -115,6 +115,13 @@ func main() {
 				log.Fatal(err)
 			}
 
+			if item.Annotations == nil {
+				item.Annotations = make(map[string]string)
+			}
+			item.Annotations["containerd.io/distribution.source.docker.io"] = repo
+			item.Annotations["io.containerd.image.name"] = distributionRef.String()
+			item.Annotations["org.opencontainers.image.ref.name"] = tag
+
 			indexFile.Manifests = append(indexFile.Manifests, item)
 			break
 		}
