@@ -18,9 +18,12 @@ package services
 import (
 	"fmt"
 	"io"
+	"net/url"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/arenadata/adcm-installer/internal/services/helpers"
 	"github.com/arenadata/adcm-installer/pkg/compose"
@@ -54,6 +57,27 @@ const (
 	VaultDeployModeDev   = "dev"
 	VaultUnsealData      = "unseal-data"
 
+	SecretStorageFileSystem = "FileSystem"
+	SecretStorageVault      = "Vault"
+
+	VaultTypeEmbedded = "embedded"
+	VaultTypeExternal = "external"
+
+	VaultTokenKey      = "vault-token"
+	VaultCaKey         = "vault-ca"
+	VaultClientCertKey = "vault-client-cert"
+	VaultClientKeyKey  = "vault-client-key"
+
+	SecretBackendEnv           = "SECRET_BACKEND"
+	SecretBackendEnvFileSystem = "FileSystemBackend"
+	SecretBackendEnvVault      = "VaultBackend"
+	VaultUrlEnv                = "VAULT_URL"
+	VaultMountPointEnv         = "VAULT_MOUNT_POINT"
+	VaultTokenFileEnv          = "VAULT_TOKEN_FILE"
+	VaultCaFileEnv             = "VAULT_CA_FILE"
+	VaultClientCertFileEnv     = "VAULT_CLIENT_CERT_FILE"
+	VaultClientKeyFileEnv      = "VAULT_CLIENT_KEY_FILE"
+
 	AdcmName   = "adcm"
 	AdpgName   = "adpg"
 	ConsulName = "consul"
@@ -86,6 +110,16 @@ var (
 		VaultDeployModeHa,
 		VaultDeployModeDev,
 	}
+
+	allowSecretStorages = []string{
+		SecretStorageFileSystem,
+		SecretStorageVault,
+	}
+
+	allowVaultTypes = []string{
+		VaultTypeEmbedded,
+		VaultTypeExternal,
+	}
 )
 
 type XSecrets struct {
@@ -96,6 +130,9 @@ type XSecrets struct {
 }
 
 type InitConfig struct {
+	SecretStorage string `yaml:"secret-storage"`
+	VaultType     string `yaml:"vault-type"`
+
 	Adcm   AdcmConfig   `yaml:",inline"`
 	Adpg   AdpgConfig   `yaml:",inline"`
 	Consul ConsulConfig `yaml:",inline"`
@@ -108,6 +145,7 @@ type Project struct {
 	config             *InitConfig
 	interactive        bool
 	crypt              secrets.Secrets
+	vaultMountPoints   map[string]bool
 }
 
 func New(name string, opts ...ProjectOption) (*Project, error) {
@@ -137,6 +175,14 @@ func (prj *Project) Build() error {
 		checkErr(readValue(&prj.config.Adcm.Count, &prompt{msg: "Number of ADCM instances", def: adcmCount}))
 	}
 
+	if err := prj.resolveSecretStorage(); err != nil {
+		return err
+	}
+
+	prj.consul()
+	prj.adpg()
+	prj.vault()
+
 	if prj.config.Adcm.Count > 1 {
 		for i := uint8(1); i <= prj.config.Adcm.Count; i++ {
 			prj.adcm(fmt.Sprintf("adcm-%d", i))
@@ -145,15 +191,130 @@ func (prj *Project) Build() error {
 		prj.adcm("")
 	}
 
-	prj.consul()
-	prj.adpg()
-	prj.vault()
-
 	for name := range prj.prj.Services {
 		prj.AppendHelpers(sharedHelpers(name)...)
 	}
 
 	return prj.ApplyHelpers()
+}
+
+func (prj *Project) resolveSecretStorage() error {
+	config := prj.config
+
+	if len(config.SecretStorage) > 0 && !slices.Contains(allowSecretStorages, config.SecretStorage) {
+		return fmt.Errorf("unknown secret-storage %q, allowed values: %s",
+			config.SecretStorage, strings.Join(allowSecretStorages, ", "))
+	}
+	if len(config.VaultType) > 0 && !slices.Contains(allowVaultTypes, config.VaultType) {
+		return fmt.Errorf("unknown vault-type %q, allowed values: %s",
+			config.VaultType, strings.Join(allowVaultTypes, ", "))
+	}
+
+	vaultRequested := config.Vault.enable
+
+	if prj.interactive {
+		if vaultRequested {
+			config.SecretStorage = SecretStorageVault
+		} else if len(config.SecretStorage) == 0 {
+			storagePrompt := &prompt{
+				msg:  "Select Secret Storage:",
+				def:  SecretStorageFileSystem,
+				opts: allowSecretStorages,
+			}
+			checkErr(readValue(&config.SecretStorage, storagePrompt))
+		}
+
+		if config.SecretStorage == SecretStorageVault && len(config.VaultType) == 0 {
+			typePrompt := &prompt{
+				msg:  "Select Vault Secret Storage type:",
+				def:  VaultTypeEmbedded,
+				opts: allowVaultTypes,
+				help: "embedded runs a managed OpenBao service next to ADCM, external uses an existing Vault/OpenBao server",
+			}
+			checkErr(readValue(&config.VaultType, typePrompt))
+		}
+	} else if len(config.SecretStorage) == 0 {
+		config.SecretStorage = SecretStorageFileSystem
+		if vaultRequested {
+			config.SecretStorage = SecretStorageVault
+		}
+	}
+
+	if config.SecretStorage != SecretStorageVault {
+		return nil
+	}
+
+	if len(config.VaultType) == 0 {
+		config.VaultType = VaultTypeEmbedded
+	}
+
+	switch config.VaultType {
+	case VaultTypeEmbedded:
+		config.Vault.enable = true
+	case VaultTypeExternal:
+		config.Vault.enable = false
+		return prj.externalVaultSettings()
+	}
+
+	return nil
+}
+
+func (prj *Project) externalVaultSettings() error {
+	config := &prj.config.Adcm
+
+	if prj.interactive {
+		checkErr(readValue(&config.VaultUrl,
+			&prompt{msg: "Vault url:", def: config.VaultUrl, help: "e.g. https://vault.example.com:8200"},
+			validVaultUrl))
+		checkErr(readValue(&config.VaultTokenFile,
+			&prompt{msg: "Vault token file path:",
+				help: "Path to a local file with the Vault token that ADCM will use"},
+			survey.ComposeValidators(survey.Required, fileExists)))
+		checkErr(readValue(&config.VaultCaFile,
+			&prompt{msg: "Vault CA file path:",
+				help: "Leave blank if the Vault certificate is signed by a well-known CA or TLS is not used"},
+			fileExists))
+		checkErr(readValue(&config.VaultClientCertFile,
+			&prompt{msg: "Vault client certificate file path:",
+				help: "Leave blank if Vault does not require client TLS authentication"},
+			fileExists))
+		if len(config.VaultClientCertFile) > 0 {
+			checkErr(readValue(&config.VaultClientKeyFile,
+				&prompt{msg: "Vault client private key file path:"},
+				survey.ComposeValidators(survey.Required, fileExists)))
+		}
+	}
+
+	if err := validVaultUrl(config.VaultUrl); err != nil {
+		return fmt.Errorf("adcm-vault-url: %v", err)
+	}
+	if len(config.VaultTokenFile) == 0 {
+		return fmt.Errorf("adcm-vault-token-file is required when vault-type is %q", VaultTypeExternal)
+	}
+	if err := fileExists(config.VaultTokenFile); err != nil {
+		return fmt.Errorf("adcm-vault-token-file: %v", err)
+	}
+	if (len(config.VaultClientCertFile) > 0) != (len(config.VaultClientKeyFile) > 0) {
+		return fmt.Errorf("adcm-vault-client-cert-file and adcm-vault-client-key-file must be specified together")
+	}
+
+	return nil
+}
+
+func validVaultUrl(val interface{}) error {
+	rawUrl, _ := val.(string)
+	if len(rawUrl) == 0 {
+		return fmt.Errorf("url is required")
+	}
+
+	u, err := url.Parse(rawUrl)
+	if err != nil {
+		return fmt.Errorf("invalid url: %v", err)
+	}
+	if (u.Scheme != "http" && u.Scheme != "https") || len(u.Host) == 0 {
+		return fmt.Errorf("url must be in http(s)://host[:port] format")
+	}
+	return nil
 }
 
 func (prj *Project) AppendHelpers(hlp ...helpers.ModHelper) {

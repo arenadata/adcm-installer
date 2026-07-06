@@ -42,7 +42,7 @@ type Container struct {
 	bin  string
 }
 
-func New(name string, opts ...ContainerOption) (unseal.Runner, error) {
+func New(name string, opts ...ContainerOption) (*Container, error) {
 	c := &Container{
 		name: name,
 		buf:  new(bytes.Buffer),
@@ -152,6 +152,59 @@ func (c *Container) Init(ctx context.Context) (*unseal.VaultInitData, error) {
 		return nil, err
 	}
 	return unsealData, nil
+}
+
+func (c *Container) execEnv(ctx context.Context, env []string, command ...string) error {
+	opts := container.NewExecOptions()
+	_ = opts.Env.Set(unseal.EnvFormatJson)
+	for _, e := range env {
+		_ = opts.Env.Set(e)
+	}
+	opts.Command = command
+
+	return container.RunExec(ctx, c.cli, c.name, opts)
+}
+
+func tokenEnv(token string) []string {
+	return []string{"VAULT_TOKEN=" + token, "BAO_TOKEN=" + token}
+}
+
+func (c *Container) mounts(ctx context.Context, token string) (map[string]any, error) {
+	if err := c.execEnv(ctx, tokenEnv(token), c.bin, "secrets", "list"); err != nil {
+		c.buf.Reset()
+		return nil, fmt.Errorf("secrets list: call command failed: %v", err)
+	}
+
+	var mounts map[string]any
+	if err := c.unmarshal(&mounts); err != nil {
+		return nil, fmt.Errorf("secrets list: %v", err)
+	}
+	return mounts, nil
+}
+
+func (c *Container) EnsureKV2Mounts(ctx context.Context, token string, mountPoints []string) error {
+	if len(mountPoints) == 0 {
+		return nil
+	}
+
+	existing, err := c.mounts(ctx, token)
+	if err != nil {
+		return err
+	}
+
+	for _, mountPoint := range mountPoints {
+		if _, ok := existing[strings.TrimSuffix(mountPoint, "/")+"/"]; ok {
+			continue
+		}
+
+		err = c.execEnv(ctx, tokenEnv(token), c.bin, "secrets", "enable", "-path="+mountPoint, "kv-v2")
+		c.buf.Reset()
+		if err != nil {
+			return fmt.Errorf("enable kv-v2 mount %q: call command failed: %v", mountPoint, err)
+		}
+	}
+
+	return nil
 }
 
 func (c *Container) Unseal(ctx context.Context, keys []string) error {
