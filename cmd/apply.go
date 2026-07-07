@@ -412,20 +412,21 @@ func startManagedVault(ctx context.Context, prj *composeTypes.Project, comp *com
 		return err
 	}
 
+	watch := replaceWatch{upDone: make(chan struct{})}
+	if force {
+		_, watch.oldContainerID = runningVaultContainer(ctx, comp, prj.Name)
+	}
+
 	var rootToken string
 	eg, egCtx := errgroup.WithContext(ctx)
 	eg.Go(func() error {
 		var e error
-		rootToken, e = vaultInit(egCtx, prj, comp, aes, force)
+		rootToken, e = vaultInit(egCtx, prj, comp, aes, force, watch)
 		return e
 	})
 
-	containerName := getContainerNameIfItIsRunning(ctx, comp, prj.Name)
-	if force && len(containerName) > 0 {
-		time.Sleep(5 * time.Second)
-	}
-
 	eg.Go(func() error {
+		defer close(watch.upDone)
 		return comp.Up(egCtx, vaultPrj, true)
 	})
 
@@ -434,6 +435,11 @@ func startManagedVault(ctx context.Context, prj *composeTypes.Project, comp *com
 	}
 
 	return configureAdcmVaultAccess(ctx, prj, comp, rootToken)
+}
+
+type replaceWatch struct {
+	oldContainerID string
+	upDone chan struct{}
 }
 
 func configureAdcmVaultAccess(ctx context.Context, prj *composeTypes.Project, comp *compose.Compose, rootToken string) error {
@@ -446,7 +452,7 @@ func configureAdcmVaultAccess(ctx context.Context, prj *composeTypes.Project, co
 		return fmt.Errorf("no vault root token available to configure ADCM secret storage")
 	}
 
-	containerName := getContainerNameIfItIsRunning(ctx, comp, prj.Name)
+	containerName, _ := runningVaultContainer(ctx, comp, prj.Name)
 	if len(containerName) == 0 {
 		return fmt.Errorf("vault container is not running")
 	}
@@ -499,53 +505,130 @@ func adcmServicesWithVaultBackend(prj *composeTypes.Project) map[string]string {
 	return out
 }
 
-func getContainerNameIfItIsRunning(ctx context.Context, comp *compose.Compose, prjName string) string {
+func runningVaultContainer(ctx context.Context, comp *compose.Compose, prjName string) (string, string) {
 	lst, _ := comp.List(ctx, false)
 	for _, l := range lst {
 		lbl := l.Labels
 		if lbl[api.ProjectLabel] == prjName &&
 			lbl[api.ServiceLabel] == services.VaultName &&
 			l.State == "running" {
-			return strings.Trim(l.Names[0], "/")
+			return strings.Trim(l.Names[0], "/"), l.ID
 		}
 	}
-	return ""
+	return "", ""
 }
 
-func vaultInit(ctx context.Context, prj *composeTypes.Project, comp *compose.Compose, aes secrets.Secrets, force bool) (string, error) {
-	var containerName string
-	var count int
-	tik := time.NewTicker(2 * time.Second)
+type vaultContainerResolver func(context.Context) (name string, id string)
 
-OUT:
-	for {
-		select {
-		case <-ctx.Done():
-			tik.Stop()
-			return "", ctx.Err()
-		case <-tik.C:
-			if count == 15 {
-				tik.Stop()
-				return "", fmt.Errorf("vault init timed out")
-			}
+const (
+	vaultWaitPolls = 15
+	vaultAvoidPolls = 5
+	vaultInitMaxAttempts = 5
+)
 
-			count++
-			containerName = getContainerNameIfItIsRunning(ctx, comp, prj.Name)
-			if len(containerName) > 0 {
-				tik.Stop()
-				break OUT
-			}
-		}
+var vaultPollInterval = 2 * time.Second
+
+func vaultInit(ctx context.Context, prj *composeTypes.Project, comp *compose.Compose, aes secrets.Secrets, force bool, watch replaceWatch) (string, error) {
+	resolve := func(ctx context.Context) (string, string) {
+		return runningVaultContainer(ctx, comp, prj.Name)
 	}
 
 	vaultSvc := prj.Services[services.VaultName]
 	if vaultSvc.Labels[compose.ADVaultModeLabelKey] == services.VaultDeployModeDev {
+		if _, _, err := waitVaultContainer(ctx, resolve, "", nil); err != nil {
+			return "", err
+		}
+
 		if token := vaultSvc.Environment[services.BaoDevRootTokenEnv]; token != nil {
 			return *token, nil
 		}
 		return "", nil
 	}
 
+	var lastErr error
+	for attempt := 0; attempt < vaultInitMaxAttempts; attempt++ {
+		containerName, containerID, err := waitVaultContainer(ctx, resolve, watch.oldContainerID, watch.upDone)
+		if err != nil {
+			return "", err
+		}
+
+		token, err := vaultInitOnce(ctx, prj, aes, force, containerName)
+		if err != nil {
+			if !image.IsContainerGone(err) {
+				return "", err
+			}
+
+			lastErr = err
+			log.Warnf("vault container %s went away during initialization, retrying: %v", containerName, err)
+			continue
+		}
+
+		replaced, err := vaultReplaced(ctx, resolve, containerID, watch.upDone)
+		if err != nil {
+			return "", err
+		}
+		if replaced {
+			log.Warnf("vault container %s was replaced after initialization, repeating on the new container", containerName)
+			continue
+		}
+
+		return token, nil
+	}
+
+	return "", fmt.Errorf("vault init did not survive container replacement: %v", lastErr)
+}
+
+func waitVaultContainer(ctx context.Context, resolve vaultContainerResolver, avoidID string, upDone <-chan struct{}) (string, string, error) {
+	tik := time.NewTicker(vaultPollInterval)
+	defer tik.Stop()
+
+	for count := 0; ; count++ {
+		select {
+		case <-ctx.Done():
+			return "", "", ctx.Err()
+		case <-tik.C:
+			if count == vaultWaitPolls {
+				return "", "", fmt.Errorf("vault init timed out")
+			}
+
+			name, id := resolve(ctx)
+			if len(name) == 0 {
+				continue
+			}
+
+			if len(avoidID) > 0 && id == avoidID && count < vaultAvoidPolls {
+				select {
+				case <-upDone:
+				default:
+					continue
+				}
+			}
+
+			return name, id, nil
+		}
+	}
+}
+
+func vaultReplaced(ctx context.Context, resolve vaultContainerResolver, usedID string, upDone <-chan struct{}) (bool, error) {
+	tik := time.NewTicker(vaultPollInterval)
+	defer tik.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return false, ctx.Err()
+		case <-upDone:
+			_, id := resolve(ctx)
+			return len(id) > 0 && id != usedID, nil
+		case <-tik.C:
+			if _, id := resolve(ctx); len(id) > 0 && id != usedID {
+				return true, nil
+			}
+		}
+	}
+}
+
+func vaultInitOnce(ctx context.Context, prj *composeTypes.Project, aes secrets.Secrets, force bool, containerName string) (string, error) {
 	output := prj.ComposeFiles[0]
 	var adcmYaml map[string]any
 	b, err := os.ReadFile(output)

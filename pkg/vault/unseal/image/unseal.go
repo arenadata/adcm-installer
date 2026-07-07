@@ -79,17 +79,17 @@ func New(name string, opts ...ContainerOption) (*Container, error) {
 func (c *Container) lookupBinPath() error {
 	defer c.buf.Reset()
 
+	var err error
 	for _, bin := range []string{"vault", "bao"} {
 		c.opts.Command = []string{"which", bin}
 
-		err := container.RunExec(context.Background(), c.cli, c.name, c.opts)
-		if err == nil {
+		if err = container.RunExec(context.Background(), c.cli, c.name, c.opts); err == nil {
 			c.bin = strings.TrimSpace(c.buf.String())
 			return nil
 		}
 	}
 
-	return fmt.Errorf("vault/bao executable not found in container %s", c.name)
+	return fmt.Errorf("vault/bao executable not found in container %s: %w", c.name, err)
 }
 
 func (c *Container) unmarshal(v any) error {
@@ -137,7 +137,7 @@ func (c *Container) init(ctx context.Context) error {
 	c.opts.Command = []string{c.bin, "operator", "init"}
 	err := container.RunExec(ctx, c.cli, c.name, c.opts)
 	if err != nil {
-		return fmt.Errorf("init: call command failed: %v", err)
+		return fmt.Errorf("init: call command failed: %w", err)
 	}
 	return nil
 }
@@ -212,7 +212,7 @@ func (c *Container) Unseal(ctx context.Context, keys []string) error {
 		c.opts.Command = []string{c.bin, "operator", "unseal", key}
 		err := container.RunExec(ctx, c.cli, c.name, c.opts)
 		if err != nil {
-			return fmt.Errorf("unseal: call command failed: %v", err)
+			return fmt.Errorf("unseal: call command failed: %w", err)
 		}
 
 		status, err := c.unmarshalStatus()
@@ -226,4 +226,32 @@ func (c *Container) Unseal(ctx context.Context, keys []string) error {
 	}
 
 	return fmt.Errorf("vault unseal failed")
+}
+
+var containerGoneFragments = []string{
+	"no such container",
+	"is not running",
+	"is restarting",
+	"removal of container",
+	"marked for removal",
+	": eof",
+}
+
+func IsContainerGone(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	var statusErr cli.StatusError
+	if errors.As(err, &statusErr) && (statusErr.StatusCode == 137 || statusErr.StatusCode == 143) {
+		return true
+	}
+
+	msg := strings.ToLower(err.Error())
+	for _, fragment := range containerGoneFragments {
+		if strings.Contains(msg, fragment) {
+			return true
+		}
+	}
+	return false
 }
