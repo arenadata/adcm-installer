@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 
 	"github.com/arenadata/adcm-installer/pkg/vault/unseal"
 )
@@ -30,7 +31,9 @@ type Host struct {
 	bin string
 }
 
-func New() (unseal.Runner, error) {
+var _ unseal.Runner = (*Host)(nil)
+
+func New() (*Host, error) {
 	bin, err := lookupBinPath()
 	if err != nil {
 		return nil, err
@@ -118,4 +121,40 @@ func (h *Host) Unseal(ctx context.Context, keys []string) error {
 	}
 
 	return fmt.Errorf("vault unseal failed")
+}
+
+func tokenEnv(token string) []string {
+	return []string{"VAULT_TOKEN=" + token, "BAO_TOKEN=" + token}
+}
+
+func (h *Host) EnsureKV2Mounts(ctx context.Context, token string, mountPoints []string) error {
+	if len(mountPoints) == 0 {
+		return nil
+	}
+
+	cmd := h.cmd(ctx, "secrets", "list")
+	cmd.Env = append(cmd.Env, tokenEnv(token)...)
+	resp, err := cmd.Output()
+	if err != nil {
+		return fmt.Errorf("secrets list: call command failed: %w", err)
+	}
+
+	var mounts map[string]any
+	if err = json.Unmarshal(resp, &mounts); err != nil {
+		return fmt.Errorf("secrets list: %w", err)
+	}
+
+	for _, mountPoint := range mountPoints {
+		if _, ok := mounts[strings.TrimSuffix(mountPoint, "/")+"/"]; ok {
+			continue
+		}
+
+		cmd = h.cmd(ctx, "secrets", "enable", "-path="+mountPoint, "kv-v2")
+		cmd.Env = append(cmd.Env, tokenEnv(token)...)
+		if _, err = cmd.Output(); err != nil {
+			return fmt.Errorf("enable kv-v2 mount %q: call command failed: %w", mountPoint, err)
+		}
+	}
+
+	return nil
 }

@@ -59,4 +59,5 @@ type Runner interface {
 	RawInitData(ctx context.Context) ([]byte, error)
 	Status(context.Context) (*SealStatusResponse, error)
 	Unseal(context.Context, []string) error
+	EnsureKV2Mounts(ctx context.Context, token string, mountPoints []string) error
 }

@@ -287,7 +287,11 @@ func (prj *Project) adcmSecretStorage(name string, config *AdcmConfig, xsecretsD
 		return
 	}
 
-	warnAdcmVaultSupport(name, config.Tag)
+	if !adcmVaultSupported(name, config.Tag) {
+		prj.AppendHelpers(helpers.Environment(name,
+			helpers.Env{Name: SecretBackendEnv, Value: utils.Ptr(SecretBackendEnvFileSystem)}))
+		return
+	}
 
 	mountPoint := adcmVaultMountPoint(name, config.VaultMountPoint)
 	if prj.interactive {
@@ -327,16 +331,21 @@ func (prj *Project) adcmSecretStorage(name string, config *AdcmConfig, xsecretsD
 	prj.adcmExternalVault(name, config, xsecretsData)
 }
 
-func warnAdcmVaultSupport(name, tag string) {
+func adcmVaultSupported(name, tag string) bool {
 	v, err := semver.NewVersion(tag)
 	if err != nil {
-		return
+		log.Warnf("%s: cannot verify Vault secret storage support for ADCM tag %q, "+
+			"assuming it is supported (requires ADCM %s or newer)", name, tag, ADCMVaultMinTag)
+		return true
 	}
 
 	if v.LessThan(semver.MustParse(ADCMVaultMinTag)) {
 		log.Warnf("%s: ADCM %s does not support the Vault secret storage (requires %s or newer), "+
-			"the secrets will be stored on the filesystem", name, tag, ADCMVaultMinTag)
+			"falling back to the FileSystem secret storage", name, tag, ADCMVaultMinTag)
+		return false
 	}
+
+	return true
 }
 
 func adcmVaultMountPoint(name, configured string) string {

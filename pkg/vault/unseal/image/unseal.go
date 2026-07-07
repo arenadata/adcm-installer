@@ -42,6 +42,8 @@ type Container struct {
 	bin  string
 }
 
+var _ unseal.Runner = (*Container)(nil)
+
 func New(name string, opts ...ContainerOption) (*Container, error) {
 	c := &Container{
 		name: name,
