@@ -336,7 +336,7 @@ func adcmVaultSupported(name, tag string) bool {
 	if err != nil {
 		log.Warnf("%s: cannot verify Vault secret storage support for ADCM tag %q, "+
 			"assuming it is supported (requires ADCM %s or newer)", name, tag, ADCMVaultMinTag)
-		return true
+		return false
 	}
 
 	if v.LessThan(semver.MustParse(ADCMVaultMinTag)) {
