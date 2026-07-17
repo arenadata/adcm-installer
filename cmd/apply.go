@@ -397,106 +397,283 @@ func applyProject(cmd *cobra.Command, _ []string) {
 		}()
 	}
 
-	eg, _ := errgroup.WithContext(cmd.Context())
 	if _, ok := prj.Services[services.VaultName]; ok {
-		eg.Go(func() error {
-			return vaultInit(cmd.Context(), prj, comp, aes, force)
-		})
-	}
-
-	containerName := getContainerNameIfItIsRunning(cmd.Context(), comp, prj.Name)
-	if force && len(containerName) > 0 {
-		time.Sleep(5 * time.Second)
+		if err = startManagedVault(cmd.Context(), prj, comp, aes, force); err != nil {
+			return
+		}
 	}
 
 	err = comp.Up(cmd.Context(), prj, true)
-
-	if e := eg.Wait(); e != nil {
-		if err == nil {
-			err = e
-		} else {
-			err = fmt.Errorf("%v: %v", err, e)
-		}
-	}
 }
 
-func getContainerNameIfItIsRunning(ctx context.Context, comp *compose.Compose, prjName string) string {
+func startManagedVault(ctx context.Context, prj *composeTypes.Project, comp *compose.Compose, aes secrets.Secrets, force bool) error {
+	vaultPrj, err := prj.WithSelectedServices([]string{services.VaultName})
+	if err != nil {
+		return err
+	}
+
+	watch := replaceWatch{upDone: make(chan struct{})}
+	if force {
+		_, watch.oldContainerID = runningVaultContainer(ctx, comp, prj.Name)
+	}
+
+	var rootToken string
+	eg, egCtx := errgroup.WithContext(ctx)
+	eg.Go(func() error {
+		var e error
+		rootToken, e = vaultInit(egCtx, prj, comp, aes, force, watch)
+		return e
+	})
+
+	eg.Go(func() error {
+		defer close(watch.upDone)
+		return comp.Up(egCtx, vaultPrj, true)
+	})
+
+	if err = eg.Wait(); err != nil {
+		return err
+	}
+
+	return configureAdcmVaultAccess(ctx, prj, comp, rootToken)
+}
+
+type replaceWatch struct {
+	oldContainerID string
+	upDone chan struct{}
+}
+
+func configureAdcmVaultAccess(ctx context.Context, prj *composeTypes.Project, comp *compose.Compose, rootToken string) error {
+	adcmVaultServices := adcmServicesWithVaultBackend(prj)
+	if len(adcmVaultServices) == 0 {
+		return nil
+	}
+
+	if len(rootToken) == 0 {
+		return fmt.Errorf("no vault root token available to configure ADCM secret storage")
+	}
+
+	containerName, _ := runningVaultContainer(ctx, comp, prj.Name)
+	if len(containerName) == 0 {
+		return fmt.Errorf("vault container is not running")
+	}
+
+	runner, err := image.New(containerName)
+	if err != nil {
+		return err
+	}
+
+	var mountPoints []string
+	seenMountPoints := map[string]bool{}
+	tokenSecrets := helpers.NewModHelpers()
+	for svcName, mountPoint := range adcmVaultServices {
+		if len(mountPoint) > 0 && !seenMountPoints[mountPoint] {
+			seenMountPoints[mountPoint] = true
+			mountPoints = append(mountPoints, mountPoint)
+		}
+
+		tokenSecrets = append(tokenSecrets, helpers.ProjectSecrets(helpers.Secret{
+			Source: svcName + "-" + services.VaultTokenKey,
+			Value:  rootToken,
+		}))
+	}
+
+	if err = runner.EnsureKV2Mounts(ctx, rootToken, mountPoints); err != nil {
+		return fmt.Errorf("create ADCM mount points failed: %v", err)
+	}
+
+	return tokenSecrets.Apply(prj)
+}
+
+func adcmServicesWithVaultBackend(prj *composeTypes.Project) map[string]string {
+	out := map[string]string{}
+	for name, svc := range prj.Services {
+		if svc.Labels[compose.ADAppTypeLabelKey] != services.AdcmName {
+			continue
+		}
+
+		backend := svc.Environment[services.SecretBackendEnv]
+		if backend == nil || *backend != services.SecretBackendEnvVault {
+			continue
+		}
+
+		var mountPoint string
+		if mp := svc.Environment[services.VaultMountPointEnv]; mp != nil {
+			mountPoint = *mp
+		}
+		out[name] = mountPoint
+	}
+	return out
+}
+
+func runningVaultContainer(ctx context.Context, comp *compose.Compose, prjName string) (string, string) {
 	lst, _ := comp.List(ctx, false)
 	for _, l := range lst {
 		lbl := l.Labels
 		if lbl[api.ProjectLabel] == prjName &&
 			lbl[api.ServiceLabel] == services.VaultName &&
 			l.State == "running" {
-			return strings.Trim(l.Names[0], "/")
+			return strings.Trim(l.Names[0], "/"), l.ID
 		}
 	}
-	return ""
+	return "", ""
 }
 
-func vaultInit(ctx context.Context, prj *composeTypes.Project, comp *compose.Compose, aes secrets.Secrets, force bool) error {
+type vaultContainerResolver func(context.Context) (name string, id string)
+
+const (
+	vaultWaitPolls = 15
+	vaultAvoidPolls = 5
+	vaultInitMaxAttempts = 5
+)
+
+var vaultPollInterval = 2 * time.Second
+
+func vaultInit(ctx context.Context, prj *composeTypes.Project, comp *compose.Compose, aes secrets.Secrets, force bool, watch replaceWatch) (string, error) {
+	resolve := func(ctx context.Context) (string, string) {
+		return runningVaultContainer(ctx, comp, prj.Name)
+	}
+
+	vaultSvc := prj.Services[services.VaultName]
+	if vaultSvc.Labels[compose.ADVaultModeLabelKey] == services.VaultDeployModeDev {
+		if _, _, err := waitVaultContainer(ctx, resolve, "", nil); err != nil {
+			return "", err
+		}
+
+		if token := vaultSvc.Environment[services.BaoDevRootTokenEnv]; token != nil {
+			return *token, nil
+		}
+		return "", nil
+	}
+
+	var lastErr error
+	for attempt := 0; attempt < vaultInitMaxAttempts; attempt++ {
+		containerName, containerID, err := waitVaultContainer(ctx, resolve, watch.oldContainerID, watch.upDone)
+		if err != nil {
+			return "", err
+		}
+
+		token, err := vaultInitOnce(ctx, prj, aes, force, containerName)
+		if err != nil {
+			if !image.IsContainerGone(err) {
+				return "", err
+			}
+
+			lastErr = err
+			log.Warnf("vault container %s went away during initialization, retrying: %v", containerName, err)
+			continue
+		}
+
+		replaced, err := vaultReplaced(ctx, resolve, containerID, watch.upDone)
+		if err != nil {
+			return "", err
+		}
+		if replaced {
+			log.Warnf("vault container %s was replaced after initialization, repeating on the new container", containerName)
+			continue
+		}
+
+		return token, nil
+	}
+
+	return "", fmt.Errorf("vault init did not survive container replacement: %v", lastErr)
+}
+
+func waitVaultContainer(ctx context.Context, resolve vaultContainerResolver, avoidID string, upDone <-chan struct{}) (string, string, error) {
+	tik := time.NewTicker(vaultPollInterval)
+	defer tik.Stop()
+
+	for count := 0; ; count++ {
+		select {
+		case <-ctx.Done():
+			return "", "", ctx.Err()
+		case <-tik.C:
+			if count == vaultWaitPolls {
+				return "", "", fmt.Errorf("vault init timed out")
+			}
+
+			name, id := resolve(ctx)
+			if len(name) == 0 {
+				continue
+			}
+
+			if len(avoidID) > 0 && id == avoidID && count < vaultAvoidPolls {
+				select {
+				case <-upDone:
+				default:
+					continue
+				}
+			}
+
+			return name, id, nil
+		}
+	}
+}
+
+func vaultReplaced(ctx context.Context, resolve vaultContainerResolver, usedID string, upDone <-chan struct{}) (bool, error) {
+	tik := time.NewTicker(vaultPollInterval)
+	defer tik.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return false, ctx.Err()
+		case <-upDone:
+			_, id := resolve(ctx)
+			return len(id) > 0 && id != usedID, nil
+		case <-tik.C:
+			if _, id := resolve(ctx); len(id) > 0 && id != usedID {
+				return true, nil
+			}
+		}
+	}
+}
+
+func vaultInitOnce(ctx context.Context, prj *composeTypes.Project, aes secrets.Secrets, force bool, containerName string) (string, error) {
 	output := prj.ComposeFiles[0]
 	var adcmYaml map[string]any
 	b, err := os.ReadFile(output)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if err = yaml.Unmarshal(b, &adcmYaml); err != nil {
-		return err
-	}
-
-	var containerName string
-	var count int
-	tik := time.NewTicker(2 * time.Second)
-
-OUT:
-	for {
-		select {
-		case <-tik.C:
-			if count == 15 {
-				tik.Stop()
-				return fmt.Errorf("vault init timed out")
-			}
-
-			count++
-			containerName = getContainerNameIfItIsRunning(ctx, comp, prj.Name)
-			if len(containerName) > 0 {
-				tik.Stop()
-				break OUT
-			}
-		}
+		return "", err
 	}
 
 	unsealRunner, err := image.New(containerName)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	status, err := unsealRunner.Status(ctx)
 	if err != nil {
-		return fmt.Errorf("read vault status failed: %v", err)
-	}
-
-	if !status.Sealed {
-		return nil
+		return "", fmt.Errorf("read vault status failed: %v", err)
 	}
 
 	var unsealDataRaw string
-	unMappedData := get(adcmYaml, []string{"services", services.VaultName, "x-secrets", "un-mapped"})
+	unMappedData, err := get(adcmYaml, []string{"services", services.VaultName, "x-secrets", "un-mapped"})
+	if err != nil {
+		return "", fmt.Errorf("read vault secrets from %s failed: %v", output, err)
+	}
+
 	unsealDataEnc, unsealDataIsExists := unMappedData[services.VaultUnsealData]
 	if unsealDataIsExists {
+		unsealDataString, ok := unsealDataEnc.(string)
+		if !ok {
+			return "", fmt.Errorf("services.%s.x-secrets.un-mapped.%s must be a string",
+				services.VaultName, services.VaultUnsealData)
+		}
+
+		unsealDataRaw = unsealDataString
 		if aes != nil {
-			if unsealDataRaw, err = aes.DecryptValue(unsealDataEnc.(string)); err != nil {
-				return fmt.Errorf("decrypt vault init data failed: %v", err)
+			if unsealDataRaw, err = aes.DecryptValue(unsealDataString); err != nil {
+				return "", fmt.Errorf("decrypt vault init data failed: %v", err)
 			}
-		} else {
-			unsealDataRaw = unsealDataEnc.(string)
 		}
 	}
 
-	var unsealData *unseal.VaultInitData
 	if !status.Initialized {
 		if unsealDataIsExists && !force {
-			return fmt.Errorf("you are trying unseal Vault/Openbao with uninitialized data. "+
+			return "", fmt.Errorf("you are trying unseal Vault/Openbao with uninitialized data. "+
 				"Remove the services.%s.x-secrets.un-mapped.%s key mannualy before call apply command. "+
 				"Or rerun the command with --force flag, then unseal data will be overwritten",
 				services.VaultName, services.VaultUnsealData)
@@ -504,15 +681,17 @@ OUT:
 
 		ud, err := unsealRunner.RawInitData(ctx)
 		if err != nil {
-			return err
+			return "", err
 		}
 		unsealDataRaw = string(ud)
 
 		if aes != nil {
 			if unsealDataEnc, err = aes.EncryptValue(unsealDataRaw); err != nil {
 				// this shouldn't happen, but https://go.dev/issue/66821
-				return fmt.Errorf("encrypt vault init data failed: %v", err)
+				return "", fmt.Errorf("encrypt vault init data failed: %v", err)
 			}
+		} else {
+			unsealDataEnc = unsealDataRaw
 		}
 
 		unMappedData[services.VaultUnsealData] = unsealDataEnc
@@ -524,32 +703,44 @@ OUT:
 		if err = enc.Encode(adcmYaml); err != nil {
 			// this shouldn't happen, but if it does, print the unseal data
 			log.Warnf("unseal data: %s", unsealDataEnc)
-			return fmt.Errorf("marshal compose file failed: %v", err)
+			return "", fmt.Errorf("marshal compose file failed: %v", err)
 		}
 
 		if err = os.WriteFile(output, buf.Bytes(), 0600); err != nil {
-			return fmt.Errorf("write vault init data to adcm.yaml file failed: %v", err)
+			return "", fmt.Errorf("write vault init data to adcm.yaml file failed: %v", err)
+		}
+	} else if !unsealDataIsExists {
+		if !status.Sealed {
+			return "", nil
+		}
+		return "", fmt.Errorf("vault is sealed and no %s found in services.%s.x-secrets.un-mapped; "+
+			"unseal the vault manually", services.VaultUnsealData, services.VaultName)
+	}
+
+	var unsealData *unseal.VaultInitData
+	if err = json.Unmarshal([]byte(unsealDataRaw), &unsealData); err != nil {
+		return "", fmt.Errorf("unmarshal unseal data failed: %v", err)
+	}
+
+	if status.Sealed {
+		if err = unsealRunner.Unseal(ctx, unsealData.UnsealKeysB64); err != nil {
+			return "", err
 		}
 	}
 
-	if err = json.Unmarshal([]byte(unsealDataRaw), &unsealData); err != nil {
-		return fmt.Errorf("unmarshal unseal data failed: %v", err)
-	}
-
-	if err = unsealRunner.Unseal(ctx, unsealData.UnsealKeysB64); err != nil {
-		return err
-	}
-
-	return nil
+	return unsealData.RootToken, nil
 }
 
-func get(m map[string]any, key []string) map[string]any {
+func get(m map[string]any, key []string) (map[string]any, error) {
 	x := m
-	for _, k := range key {
-		v := x[k]
-		x = v.(map[string]any)
+	for i, k := range key {
+		v, ok := x[k].(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("%q key not found or has unexpected format", strings.Join(key[:i+1], "."))
+		}
+		x = v
 	}
-	return x
+	return x, nil
 }
 
 func mountOpt(sys, user string) helpers.Mapping {

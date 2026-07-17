@@ -77,7 +77,7 @@ func componentsUpdate(cmd *cobra.Command, _ []string) {
 
 	currentVersion, err := semver.NewVersion(version)
 	if err != nil {
-		logger.Fatal("%s: %s", err, version)
+		logger.Fatalf("%s: %s", err, version)
 	}
 
 	if lastVersion.GreaterThan(currentVersion) {

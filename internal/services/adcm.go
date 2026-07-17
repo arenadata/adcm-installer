@@ -28,6 +28,8 @@ import (
 	"github.com/arenadata/adcm-installer/pkg/utils"
 
 	"github.com/AlecAivazis/survey/v2"
+	"github.com/Masterminds/semver/v3"
+	log "github.com/sirupsen/logrus"
 )
 
 type AdcmConfig struct {
@@ -49,6 +51,13 @@ type AdcmConfig struct {
 	PublishSSLPort uint16 `yaml:"adcm-publish-ssl-port"`
 	Url            string `yaml:"adcm-url"`
 	Volume         string `yaml:"adcm-volume"`
+
+	VaultUrl            string `yaml:"adcm-vault-url"`
+	VaultTokenFile      string `yaml:"adcm-vault-token-file"`
+	VaultMountPoint     string `yaml:"adcm-vault-mount-point"`
+	VaultCaFile         string `yaml:"adcm-vault-ca-file"`
+	VaultClientCertFile string `yaml:"adcm-vault-client-cert-file"`
+	VaultClientKeyFile  string `yaml:"adcm-vault-client-key-file"`
 
 	ip string
 }
@@ -244,6 +253,8 @@ func (prj *Project) adcm(name string) {
 		xsecretsData[PemCert] = string(b)
 	}
 
+	prj.adcmSecretStorage(name, &config, xsecretsData)
+
 	xsecretsDataEncrypted := xsecretsData
 	if prj.crypt != nil {
 		var err error
@@ -266,5 +277,148 @@ func (prj *Project) adcm(name string) {
 
 	if config.PublishPort > 0 {
 		prj.AppendHelpers(helpers.PublishPort(name, config.PublishPort, ADCMPublishPort))
+	}
+}
+
+func (prj *Project) adcmSecretStorage(name string, config *AdcmConfig, xsecretsData map[string]string) {
+	if prj.config.SecretStorage != SecretStorageVault {
+		prj.AppendHelpers(helpers.Environment(name,
+			helpers.Env{Name: SecretBackendEnv, Value: utils.Ptr(SecretBackendEnvFileSystem)}))
+		return
+	}
+
+	if !adcmVaultSupported(name, config.Tag) {
+		prj.AppendHelpers(helpers.Environment(name,
+			helpers.Env{Name: SecretBackendEnv, Value: utils.Ptr(SecretBackendEnvFileSystem)}))
+		return
+	}
+
+	mountPoint := adcmVaultMountPoint(name, config.VaultMountPoint)
+	if prj.interactive {
+		checkErr(readValue(&mountPoint,
+			&prompt{msg: fmt.Sprintf("%s: ADCM Vault mount point:", name), def: mountPoint,
+				help: "KV v2 secrets engine mount point used by this ADCM instance"}, survey.Required))
+	}
+
+	if prj.vaultMountPoints == nil {
+		prj.vaultMountPoints = map[string]bool{}
+	}
+	if prj.vaultMountPoints[mountPoint] {
+		checkErr(fmt.Errorf("vault mount point %q is already used by another ADCM instance", mountPoint))
+	}
+	prj.vaultMountPoints[mountPoint] = true
+
+	config.VaultMountPoint = mountPoint
+
+	tokenTarget := path.Join(helpers.SecretsPath, VaultTokenKey)
+	prj.AppendHelpers(
+		helpers.Environment(name,
+			helpers.Env{Name: SecretBackendEnv, Value: utils.Ptr(SecretBackendEnvVault)},
+			helpers.Env{Name: VaultMountPointEnv, Value: &mountPoint},
+			helpers.Env{Name: VaultTokenFileEnv, Value: &tokenTarget},
+		),
+		helpers.Secrets(name, helpers.Secret{
+			Source:   VaultTokenKey,
+			Target:   tokenTarget,
+			FileMode: 0o400,
+		}),
+	)
+
+	if prj.config.VaultType == VaultTypeEmbedded {
+		prj.adcmEmbeddedVault(name, xsecretsData)
+		return
+	}
+	prj.adcmExternalVault(name, config, xsecretsData)
+}
+
+func adcmVaultSupported(name, tag string) bool {
+	v, err := semver.NewVersion(tag)
+	if err != nil {
+		log.Warnf("%s: cannot verify Vault secret storage support for ADCM tag %q, "+
+			"assuming it is supported (requires ADCM %s or newer)", name, tag, ADCMVaultMinTag)
+		return false
+	}
+
+	if v.LessThan(semver.MustParse(ADCMVaultMinTag)) {
+		log.Warnf("%s: ADCM %s does not support the Vault secret storage (requires %s or newer), "+
+			"falling back to the FileSystem secret storage", name, tag, ADCMVaultMinTag)
+		return false
+	}
+
+	return true
+}
+
+func adcmVaultMountPoint(name, configured string) string {
+	if len(configured) == 0 {
+		return name
+	}
+	if name == AdcmName {
+		return configured
+	}
+	return configured + strings.TrimPrefix(name, AdcmName)
+}
+
+func (prj *Project) adcmEmbeddedVault(name string, xsecretsData map[string]string) {
+	vaultConfig := prj.config.Vault
+
+	scheme := "http"
+	if len(vaultConfig.SSLKeyFile) > 0 {
+		scheme = "https"
+
+		if len(vaultConfig.SSLCertFile) > 0 {
+			b, err := os.ReadFile(vaultConfig.SSLCertFile)
+			checkErr(err)
+			xsecretsData[VaultCaKey] = string(b)
+
+			caTarget := path.Join(helpers.SecretsPath, VaultCaKey)
+			prj.AppendHelpers(
+				helpers.Environment(name, helpers.Env{Name: VaultCaFileEnv, Value: utils.Ptr(caTarget)}),
+				helpers.Secrets(name, helpers.Secret{
+					Source:   VaultCaKey,
+					Target:   caTarget,
+					FileMode: 0o440,
+				}),
+			)
+		}
+	}
+
+	vaultUrl := fmt.Sprintf("%s://%s:%d", scheme, VaultName, VaultPublishPort)
+	prj.AppendHelpers(
+		helpers.Environment(name, helpers.Env{Name: VaultUrlEnv, Value: &vaultUrl}),
+		helpers.DependsOn(name, helpers.Depended{Service: VaultName, Required: true}),
+	)
+}
+
+func (prj *Project) adcmExternalVault(name string, config *AdcmConfig, xsecretsData map[string]string) {
+	prj.AppendHelpers(helpers.Environment(name, helpers.Env{Name: VaultUrlEnv, Value: &config.VaultUrl}))
+
+	b, err := os.ReadFile(config.VaultTokenFile)
+	checkErr(err)
+	xsecretsData[VaultTokenKey] = strings.TrimSpace(string(b))
+
+	tlsFiles := []struct {
+		path     string
+		key      string
+		env      string
+		fileMode int64
+	}{
+		{path: config.VaultCaFile, key: VaultCaKey, env: VaultCaFileEnv, fileMode: 0o440},
+		{path: config.VaultClientCertFile, key: VaultClientCertKey, env: VaultClientCertFileEnv, fileMode: 0o440},
+		{path: config.VaultClientKeyFile, key: VaultClientKeyKey, env: VaultClientKeyFileEnv, fileMode: 0o400},
+	}
+	for _, f := range tlsFiles {
+		if len(f.path) == 0 {
+			continue
+		}
+
+		b, err := os.ReadFile(f.path)
+		checkErr(err)
+		xsecretsData[f.key] = string(b)
+
+		target := path.Join(helpers.SecretsPath, f.key)
+		prj.AppendHelpers(
+			helpers.Environment(name, helpers.Env{Name: f.env, Value: utils.Ptr(target)}),
+			helpers.Secrets(name, helpers.Secret{Source: f.key, Target: target, FileMode: f.fileMode}),
+		)
 	}
 }

@@ -34,6 +34,34 @@ Stop ADCM
 adi delete
 ```
 
+### ADCM Secret Storage
+
+ADCM stores its secrets either on filesystem (default) or in a
+Vault/OpenBao server. Storage selected during `adi init`:
+
+```shell
+# embedded Vault: adds a managed OpenBao service and configures ADCM to use it.
+# During `adi apply` OpenBao server started in persistence mode,
+# initialized, unsealed and a KV v2 mount point is created for each ADCM
+# instance. Root token is passed to ADCM via a vault-token secret
+adi init adcm-project --adpg --vault
+
+# interactive mode: select secret storage (FileSystem or Vault) and, for
+# Vault, the type (embedded or external)
+adi init adcm-project --adpg -i
+
+# external Vault via config file (requires an existing KV v2 mount point)
+cat config.yaml
+secret-storage: Vault
+vault-type: external
+adcm-vault-url: https://vault.example.com:8200
+adcm-vault-token-file: /path/to/token
+adcm-vault-mount-point: adcm
+adcm-vault-ca-file: /path/to/ca.crt
+
+adi init adcm-project --adpg --from-config config.yaml
+```
+
 ### Run init with values from config file
 
 ```shell
@@ -64,6 +92,14 @@ adi init adcm-project --from-config config.yaml
 | adcm-publish-ssl-port  | uint16     | 8443                           | ADCM publish SSL port                    |
 | adcm-url               | string     | computed                       | ADCM url                                 |
 | adcm-volume            | string     | adcm                           | ADCM volume name or path                 |
+| secret-storage         | string     | FileSystem (Vault with --vault) | ADCM Secret Storage (FileSystem, Vault) |
+| vault-type             | string     | embedded                       | Vault Secret Storage type (embedded, external) |
+| adcm-vault-url         | string     |                                | External Vault url                       |
+| adcm-vault-token-file  | string     |                                | Path to a file with the external Vault token |
+| adcm-vault-mount-point | string     | ADCM service name              | Vault KV v2 mount point used by ADCM     |
+| adcm-vault-ca-file     | string     |                                | External Vault CA file path              |
+| adcm-vault-client-cert-file | string |                                | External Vault client certificate file path |
+| adcm-vault-client-key-file  | string |                                | External Vault client private key file path |
 | adpg-pass              | string     | random generated               | ADPG superuser password                  |
 | adpg-image             | string     | hub.arenadata.io/adcm/postgres | ADPG image                               |
 | adpg-tag               | string     | v16.3.1                        | ADPG image tag                           |

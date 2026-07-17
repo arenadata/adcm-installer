@@ -59,7 +59,16 @@ error. The installation name must be unique within a single server.
 - --force allows you to overwrite the existing configuration file
 - --from-config path to a file in yaml format filled with variables for
                 fine-tuning the configuration without using interactive mode
-- --interactive fine-tuning each service in interactive mode`,
+- --interactive fine-tuning each service in interactive mode
+- --vault configures ADCM to use the Vault secret storage. In interactive
+          mode you can choose between the embedded Vault (managed OpenBao
+          service) and an external Vault/OpenBao server; in non-interactive
+          mode the embedded Vault is used. Without --vault the secret storage
+          can be selected in interactive mode (FileSystem or Vault);
+          non-interactive mode defaults to FileSystem. An external Vault
+          requires an existing KV v2 secrets engine mount point; for the
+          embedded Vault the mount point is created automatically by the
+          apply command`,
 		PreRunE: cobra.ExactArgs(1),
 		Run:     initProject,
 	}
@@ -83,7 +92,7 @@ func initCmdFlags(cmd *cobra.Command) {
 	f.Uint8("adcm-count", 1, "Set number of ADCM instances")
 	f.Bool(services.AdpgName, false, "Use managed ADPG")
 	f.Bool(services.ConsulName, false, "Use managed Consul (Dev-mode)")
-	f.Bool(services.VaultName, false, "Use managed Vault")
+	f.Bool(services.VaultName, false, "Use Vault secret storage for ADCM (embedded OpenBao service by default)")
 	f.Bool("force", false, "Force overwrite existing config file")
 	f.BoolP("interactive", "i", false, "Interactive mode")
 

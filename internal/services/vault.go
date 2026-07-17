@@ -31,6 +31,8 @@ import (
 	"github.com/AlecAivazis/survey/v2"
 )
 
+const BaoDevRootTokenEnv = "BAO_DEV_ROOT_TOKEN_ID"
+
 type VaultConfig struct {
 	enable bool
 
@@ -203,34 +205,38 @@ func (prj *Project) vault() {
 		)
 	}
 
+	baoAddr := "http://127.0.0.1:8200/"
+	var wgetArg string
+	if config.Mode != VaultDeployModeDev && len(config.SSLKeyFile) > 0 {
+		baoAddr = "https://127.0.0.1:8200/"
+		wgetArg = " --no-check-certificate"
+
+		prj.AppendHelpers(
+			helpers.Environment(name, helpers.Env{Name: "BAO_SKIP_VERIFY", Value: utils.Ptr("true")}),
+		)
+	}
+
+	healthCheckCommand := fmt.Sprintf("wget%s -q -O - %sv1/sys/health", wgetArg, baoAddr)
+	prj.AppendHelpers(
+		helpers.Environment(name,
+			helpers.Env{Name: "BAO_ADDR", Value: &baoAddr},
+		),
+		helpers.HealthCheck(name, helpers.HealthCheckConfig{
+			Cmd:      []string{"CMD-SHELL", healthCheckCommand},
+			Interval: 3 * time.Second,
+			Retries:  5,
+			Timeout:  5 * time.Second,
+		}),
+	)
+
 	if config.Mode == VaultDeployModeDev {
 		prj.AppendHelpers(
 			helpers.Environment(name,
-				helpers.Env{Name: "BAO_DEV_ROOT_TOKEN_ID", Value: utils.Ptr("openbao_secret")},
+				helpers.Env{Name: BaoDevRootTokenEnv, Value: utils.Ptr("openbao_secret")},
 				helpers.Env{Name: "BAO_DEV_LISTEN_ADDRESS", Value: utils.Ptr("0.0.0.0:8200")},
 			),
 		)
 	} else {
-		baoAddr := "http://127.0.0.1:8200/"
-		var wgetArg string
-		if len(config.SSLKeyFile) > 0 {
-			baoAddr = "https://127.0.0.1:8200/"
-			wgetArg = " --no-check-certificate"
-		}
-
-		healthCheckCommand := fmt.Sprintf("wget%s -q -O - %sv1/sys/health", wgetArg, baoAddr)
-		prj.AppendHelpers(
-			helpers.Environment(name,
-				helpers.Env{Name: "BAO_ADDR", Value: &baoAddr},
-			),
-			helpers.HealthCheck(name, helpers.HealthCheckConfig{
-				Cmd:      []string{"CMD-SHELL", healthCheckCommand},
-				Interval: 3 * time.Second,
-				Retries:  5,
-				Timeout:  5 * time.Second,
-			}),
-		)
-
 		unMappedSecrets := map[string]string{
 			PgDbName: config.DBName,
 			PgDbUser: config.DBUser,

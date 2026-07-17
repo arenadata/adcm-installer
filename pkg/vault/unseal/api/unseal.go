@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/arenadata/adcm-installer/pkg/vault/unseal"
 
@@ -28,6 +29,8 @@ import (
 type Api struct {
 	client *api.Client
 }
+
+var _ unseal.Runner = (*Api)(nil)
 
 func New(addr string) (*Api, error) {
 	conf := api.DefaultConfig()
@@ -100,4 +103,32 @@ func (a *Api) Unseal(ctx context.Context, keys []string) error {
 	}
 
 	return fmt.Errorf("vault unseal failed")
+}
+
+func (a *Api) EnsureKV2Mounts(ctx context.Context, token string, mountPoints []string) error {
+	if len(mountPoints) == 0 {
+		return nil
+	}
+
+	a.client.SetToken(token)
+	mounts, err := a.client.Sys().ListMountsWithContext(ctx)
+	if err != nil {
+		return fmt.Errorf("secrets list: %w", err)
+	}
+
+	for _, mountPoint := range mountPoints {
+		if _, ok := mounts[strings.TrimSuffix(mountPoint, "/")+"/"]; ok {
+			continue
+		}
+
+		input := &api.MountInput{
+			Type:    "kv",
+			Options: map[string]string{"version": "2"},
+		}
+		if err = a.client.Sys().MountWithContext(ctx, mountPoint, input); err != nil {
+			return fmt.Errorf("enable kv-v2 mount %q: %w", mountPoint, err)
+		}
+	}
+
+	return nil
 }

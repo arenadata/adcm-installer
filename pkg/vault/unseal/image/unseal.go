@@ -42,7 +42,9 @@ type Container struct {
 	bin  string
 }
 
-func New(name string, opts ...ContainerOption) (unseal.Runner, error) {
+var _ unseal.Runner = (*Container)(nil)
+
+func New(name string, opts ...ContainerOption) (*Container, error) {
 	c := &Container{
 		name: name,
 		buf:  new(bytes.Buffer),
@@ -79,17 +81,17 @@ func New(name string, opts ...ContainerOption) (unseal.Runner, error) {
 func (c *Container) lookupBinPath() error {
 	defer c.buf.Reset()
 
+	var err error
 	for _, bin := range []string{"vault", "bao"} {
 		c.opts.Command = []string{"which", bin}
 
-		err := container.RunExec(context.Background(), c.cli, c.name, c.opts)
-		if err == nil {
+		if err = container.RunExec(context.Background(), c.cli, c.name, c.opts); err == nil {
 			c.bin = strings.TrimSpace(c.buf.String())
 			return nil
 		}
 	}
 
-	return fmt.Errorf("vault/bao executable not found in container %s", c.name)
+	return fmt.Errorf("vault/bao executable not found in container %s: %w", c.name, err)
 }
 
 func (c *Container) unmarshal(v any) error {
@@ -137,7 +139,7 @@ func (c *Container) init(ctx context.Context) error {
 	c.opts.Command = []string{c.bin, "operator", "init"}
 	err := container.RunExec(ctx, c.cli, c.name, c.opts)
 	if err != nil {
-		return fmt.Errorf("init: call command failed: %v", err)
+		return fmt.Errorf("init: call command failed: %w", err)
 	}
 	return nil
 }
@@ -154,12 +156,65 @@ func (c *Container) Init(ctx context.Context) (*unseal.VaultInitData, error) {
 	return unsealData, nil
 }
 
+func (c *Container) execEnv(ctx context.Context, env []string, command ...string) error {
+	opts := container.NewExecOptions()
+	_ = opts.Env.Set(unseal.EnvFormatJson)
+	for _, e := range env {
+		_ = opts.Env.Set(e)
+	}
+	opts.Command = command
+
+	return container.RunExec(ctx, c.cli, c.name, opts)
+}
+
+func tokenEnv(token string) []string {
+	return []string{"VAULT_TOKEN=" + token, "BAO_TOKEN=" + token}
+}
+
+func (c *Container) mounts(ctx context.Context, token string) (map[string]any, error) {
+	if err := c.execEnv(ctx, tokenEnv(token), c.bin, "secrets", "list"); err != nil {
+		c.buf.Reset()
+		return nil, fmt.Errorf("secrets list: call command failed: %v", err)
+	}
+
+	var mounts map[string]any
+	if err := c.unmarshal(&mounts); err != nil {
+		return nil, fmt.Errorf("secrets list: %v", err)
+	}
+	return mounts, nil
+}
+
+func (c *Container) EnsureKV2Mounts(ctx context.Context, token string, mountPoints []string) error {
+	if len(mountPoints) == 0 {
+		return nil
+	}
+
+	existing, err := c.mounts(ctx, token)
+	if err != nil {
+		return err
+	}
+
+	for _, mountPoint := range mountPoints {
+		if _, ok := existing[strings.TrimSuffix(mountPoint, "/")+"/"]; ok {
+			continue
+		}
+
+		err = c.execEnv(ctx, tokenEnv(token), c.bin, "secrets", "enable", "-path="+mountPoint, "kv-v2")
+		c.buf.Reset()
+		if err != nil {
+			return fmt.Errorf("enable kv-v2 mount %q: call command failed: %v", mountPoint, err)
+		}
+	}
+
+	return nil
+}
+
 func (c *Container) Unseal(ctx context.Context, keys []string) error {
 	for _, key := range keys {
 		c.opts.Command = []string{c.bin, "operator", "unseal", key}
 		err := container.RunExec(ctx, c.cli, c.name, c.opts)
 		if err != nil {
-			return fmt.Errorf("unseal: call command failed: %v", err)
+			return fmt.Errorf("unseal: call command failed: %w", err)
 		}
 
 		status, err := c.unmarshalStatus()
@@ -173,4 +228,32 @@ func (c *Container) Unseal(ctx context.Context, keys []string) error {
 	}
 
 	return fmt.Errorf("vault unseal failed")
+}
+
+var containerGoneFragments = []string{
+	"no such container",
+	"is not running",
+	"is restarting",
+	"removal of container",
+	"marked for removal",
+	": eof",
+}
+
+func IsContainerGone(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	var statusErr cli.StatusError
+	if errors.As(err, &statusErr) && (statusErr.StatusCode == 137 || statusErr.StatusCode == 143) {
+		return true
+	}
+
+	msg := strings.ToLower(err.Error())
+	for _, fragment := range containerGoneFragments {
+		if strings.Contains(msg, fragment) {
+			return true
+		}
+	}
+	return false
 }
