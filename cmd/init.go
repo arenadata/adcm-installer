@@ -50,6 +50,10 @@ the database in interactive mode. Attempting to call the command with an
 existing configuration file, an invalid age.key file format, or without
 specifying an installation name will result in the program exiting with an
 error. The installation name must be unique within a single server.
+- --adcm-count sets the number of ADCM instances
+- --adcm-worker-count sets the number of ADCM worker (Celery) services and
+                      switches the job execution environment to celery.
+                      Celery workers require ADCM 3.0.0 or newer
 - --adpg adds the PostgreSQL service to the configuration file and configures
          ADCM to use it. Interactive mode is not used without specifying
          additional parameters
@@ -90,6 +94,7 @@ func initCmdFlags(cmd *cobra.Command) {
 	_ = f.MarkHidden("no-crypt")
 
 	f.Uint8("adcm-count", 1, "Set number of ADCM instances")
+	f.Uint8("adcm-worker-count", 1, "Set number of ADCM worker (Celery) instances, 0 disables them")
 	f.Bool(services.AdpgName, false, "Use managed ADPG")
 	f.Bool(services.ConsulName, false, "Use managed Consul (Dev-mode)")
 	f.Bool(services.VaultName, false, "Use Vault secret storage for ADCM (embedded OpenBao service by default)")
@@ -99,6 +104,7 @@ func initCmdFlags(cmd *cobra.Command) {
 	f.StringP("output", "o", "", "Output filename")
 	f.String("from-config", "", "Read variables from config file")
 	cmd.MarkFlagsMutuallyExclusive("adcm-count", "from-config", "interactive")
+	cmd.MarkFlagsMutuallyExclusive("adcm-worker-count", "from-config", "interactive")
 }
 
 func initProject(cmd *cobra.Command, args []string) {
@@ -122,6 +128,13 @@ func initProject(cmd *cobra.Command, args []string) {
 		services.WithConfigFile(configFile),
 		services.WithAdcmCount(adcmCount),
 	)
+
+	// unlike --adcm-count the flag must not win over the config file unless it
+	// was set explicitly: its zero value is a meaningful "no workers"
+	if cmd.Flags().Changed("adcm-worker-count") {
+		workerCount, _ := cmd.Flags().GetUint8("adcm-worker-count")
+		opts = append(opts, services.WithAdcmWorkerCount(workerCount))
+	}
 
 	var isNewAgeKey bool
 	var age *secrets.AgeCrypt
@@ -172,7 +185,7 @@ func initProject(cmd *cobra.Command, args []string) {
 
 	uid := 10001
 	for _, svc := range prj.Services() {
-		if svc.Type == services.AdcmName {
+		if services.AdcmFamilyService(svc.Type) {
 			continue
 		}
 

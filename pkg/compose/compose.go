@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/compose-spec/compose-go/v2/types"
+	cerrdefs "github.com/containerd/errdefs"
 	"github.com/docker/cli/cli/command"
 	cliflags "github.com/docker/cli/cli/flags"
 	"github.com/docker/compose/v2/pkg/api"
@@ -36,8 +37,11 @@ import (
 )
 
 const (
-	ADLabel             = "app.arenadata.io"
-	ADAppTypeLabelKey   = ADLabel + "/type"
+	ADLabel           = "app.arenadata.io"
+	ADAppTypeLabelKey = ADLabel + "/type"
+	// ADAppAdcmLabelKey names the ADCM service a worker was built from, so that
+	// apply can find the credentials it shares with it
+	ADAppAdcmLabelKey   = ADLabel + "/adcm"
 	ADVaultModeLabelKey = ADLabel + "/vault-mode"
 
 	DefaultNetwork  = "default"
@@ -86,7 +90,8 @@ func (c Compose) Remove(ctx context.Context, prj *types.Project, services ...str
 }
 
 func (c Compose) Up(ctx context.Context, prj *types.Project, wait bool) error {
-	timeout := 30 * time.Second
+	// Now waiting db migrations during ADCM 3.0+ startup
+	timeout := 300 * time.Second
 
 	return c.svc.Up(ctx, prj, api.UpOptions{
 		Create: api.CreateOptions{
@@ -120,6 +125,44 @@ func (c Compose) Down(ctx context.Context, prj *types.Project, volumes bool) err
 
 func (c Compose) Info(ctx context.Context) (system.Info, error) {
 	return c.cli.Client().Info(ctx)
+}
+
+func (c Compose) ImageUser(ctx context.Context, image string) (string, error) {
+	resp, err := c.cli.Client().ImageInspect(ctx, image)
+	if err != nil {
+		return "", err
+	}
+	if resp.Config == nil {
+		return "", fmt.Errorf("image %q reports no config", image)
+	}
+
+	return resp.Config.User, nil
+}
+
+func (c Compose) Pull(ctx context.Context, prj *types.Project, platform string, serviceNames ...string) error {
+	pullPrj, err := prj.WithSelectedServices(serviceNames, types.IgnoreDependencies)
+	if err != nil {
+		return err
+	}
+
+	for name, svc := range pullPrj.Services {
+		svc.Platform = platform
+		svc.PullPolicy = types.PullPolicyMissing
+		pullPrj.Services[name] = svc
+	}
+
+	return c.svc.Pull(ctx, pullPrj, api.PullOptions{})
+}
+
+func (c Compose) VolumeExists(ctx context.Context, name string) (bool, error) {
+	_, err := c.cli.Client().VolumeInspect(ctx, name)
+	if err != nil {
+		if cerrdefs.IsNotFound(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
 }
 
 func (c Compose) list(ctx context.Context, all bool, filter ...filters.KeyValuePair) ([]container.Summary, error) {

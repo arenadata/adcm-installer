@@ -74,7 +74,8 @@ adi init adcm-project --from-config config.yaml
 
 | key                    | value type | default                        | description                              |
 |------------------------|------------|--------------------------------|------------------------------------------|
-| adcm-count             | uint8      | 1                              | Number of ADCM instances                 |
+| adcm-count             | uint8      | 1                              | Number of ADCM instances. They share the image, the database and the data volume, and publish consecutive ports starting from adcm-publish-port |
+| adcm-worker-count      | uint8      | 1 (celery), unused for local   | Number of ADCM worker (Celery) instances in the installation |
 | adcm-db-host           | string     |                                | ADCM database host                       |
 | adcm-db-port           | uint16     | 5432                           | ADCM database port                       |
 | adcm-db-name           | string     | adcm                           | ADCM database name                       |
@@ -94,9 +95,10 @@ adi init adcm-project --from-config config.yaml
 | adcm-volume            | string     | adcm                           | ADCM volume name or path                 |
 | secret-storage         | string     | FileSystem (Vault with --vault) | ADCM Secret Storage (FileSystem, Vault) |
 | vault-type             | string     | embedded                       | Vault Secret Storage type (embedded, external) |
+| job-execution-environment | string  | local (celery with adcm-worker-count) | Where ADCM jobs are executed (local, celery). celery adds ADCM worker services and requires ADCM 3.0.0 or newer |
 | adcm-vault-url         | string     |                                | External Vault url                       |
 | adcm-vault-token-file  | string     |                                | Path to a file with the external Vault token |
-| adcm-vault-mount-point | string     | ADCM service name              | Vault KV v2 mount point used by ADCM     |
+| adcm-vault-mount-point | string     | adcm                           | Vault KV v2 mount point shared by the ADCM instances |
 | adcm-vault-ca-file     | string     |                                | External Vault CA file path              |
 | adcm-vault-client-cert-file | string |                                | External Vault client certificate file path |
 | adcm-vault-client-key-file  | string |                                | External Vault client private key file path |

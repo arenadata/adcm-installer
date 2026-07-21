@@ -23,6 +23,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 
@@ -146,6 +147,8 @@ func applyProject(cmd *cobra.Command, _ []string) {
 	pgInit := types.NewPGInit()
 	_, managedAdpg := prj.Services[services.AdpgName]
 
+	var adcmFamilyServices []string
+
 	for name, svc := range prj.Services {
 		if needSecretsFix {
 			svc.User = strings.SplitN(svc.User, ":", 2)[0]
@@ -155,21 +158,25 @@ func applyProject(cmd *cobra.Command, _ []string) {
 		for i, sec := range svc.Secrets {
 			svc.Secrets[i].Source = name + "-" + sec.Source
 		}
+
+		appType := svc.Labels[compose.ADAppTypeLabelKey]
+
+		if services.AdcmFamilyService(appType) && !dryRunMode {
+			adcmFamilyServices = append(adcmFamilyServices, name)
+		}
+
 		prj.Services[name] = svc
 
 		servicesModHelpers = append(servicesModHelpers,
 			helpers.Profiles(name, services.PrimaryContainerProfile),
 		)
 
-		appType := svc.Labels[compose.ADAppTypeLabelKey]
-		if appType != services.AdcmName {
-			servicesModHelpers = append(servicesModHelpers,
-				helpers.ContainerName(name),
-			)
-		}
+		servicesModHelpers = append(servicesModHelpers,
+			helpers.ContainerName(name),
+		)
 
-		if appType == services.AdcmName {
-			sec := xSecrets[name]
+		if services.AdcmFamilyService(appType) {
+			sec := xSecrets[adcmSecretsSource(name, svc)]
 
 			for k, v := range sec {
 				envKey := mapFlagsToEnv[k]
@@ -280,7 +287,7 @@ func applyProject(cmd *cobra.Command, _ []string) {
 		svc := prj.Services[services.AdpgName]
 
 		// TODO: helper addService to project
-		chownName := services.ChownContainer(prj, svc)
+		chownName := services.ChownContainer(prj, svc, false)
 		initAdpgServiceName := services.InitContainer(prj, svc)
 
 		// set secrets for init-adpg container
@@ -335,6 +342,61 @@ func applyProject(cmd *cobra.Command, _ []string) {
 				helpers.Secrets(initAdpgServiceName, secret),
 				helpers.ProjectSecrets(secret),
 			)
+		}
+	}
+
+	// ADCM 3.0+ migration: chown the ownership of already-existing data
+	// volumes/bind mounts to the unprivileged user the container now runs as.
+	// The mounts are scanned first so the image is pulled and inspected just once
+	migrated := map[string]bool{}
+	migrations := make(map[string][]composeTypes.ServiceVolumeConfig, len(adcmFamilyServices))
+	needUser := false
+	for _, name := range adcmFamilyServices {
+		svc := prj.Services[name]
+
+		// the secret files are chowned to the same user, so they need it as well
+		needUser = needUser || len(svc.Secrets) > 0
+
+		for _, mnt := range svc.Volumes {
+			// the ADCM services and their workers share the data volume
+			if migrated[string(mnt.Type)+":"+mnt.Source] {
+				continue
+			}
+			migrated[string(mnt.Type)+":"+mnt.Source] = true
+
+			needsChown, err := mountNeedsChown(cmd.Context(), comp, prj, mnt)
+			if err != nil {
+				logger.Fatal(err)
+			}
+			if needsChown {
+				migrations[name] = append(migrations[name], mnt)
+				needUser = true
+			}
+		}
+	}
+
+	if needUser {
+		imageUsers, err := imageUsers(cmd.Context(), comp, prj, adcmFamilyServices, needSecretsFix)
+		if err != nil {
+			logger.Fatal(err)
+		}
+
+		for _, name := range adcmFamilyServices {
+			svc := prj.Services[name]
+			user := imageUsers[svc.Image]
+			if len(user) > 0 {
+				svc.User = user
+				prj.Services[name] = svc
+			}
+
+			if migrate := migrations[name]; len(migrate) > 0 {
+				migrateSvc := svc
+				migrateSvc.Volumes = migrate
+				if len(user) == 0 {
+					migrateSvc.User = "0:0"
+				}
+				services.ChownContainer(prj, migrateSvc, true)
+			}
 		}
 	}
 
@@ -439,7 +501,7 @@ func startManagedVault(ctx context.Context, prj *composeTypes.Project, comp *com
 
 type replaceWatch struct {
 	oldContainerID string
-	upDone chan struct{}
+	upDone         chan struct{}
 }
 
 func configureAdcmVaultAccess(ctx context.Context, prj *composeTypes.Project, comp *compose.Compose, rootToken string) error {
@@ -487,7 +549,7 @@ func configureAdcmVaultAccess(ctx context.Context, prj *composeTypes.Project, co
 func adcmServicesWithVaultBackend(prj *composeTypes.Project) map[string]string {
 	out := map[string]string{}
 	for name, svc := range prj.Services {
-		if svc.Labels[compose.ADAppTypeLabelKey] != services.AdcmName {
+		if !services.AdcmFamilyService(svc.Labels[compose.ADAppTypeLabelKey]) {
 			continue
 		}
 
@@ -521,8 +583,8 @@ func runningVaultContainer(ctx context.Context, comp *compose.Compose, prjName s
 type vaultContainerResolver func(context.Context) (name string, id string)
 
 const (
-	vaultWaitPolls = 15
-	vaultAvoidPolls = 5
+	vaultWaitPolls       = 15
+	vaultAvoidPolls      = 5
 	vaultInitMaxAttempts = 5
 )
 
@@ -743,6 +805,25 @@ func get(m map[string]any, key []string) (map[string]any, error) {
 	return x, nil
 }
 
+// service mount's ownership must be fixed for the unprivileged user.
+//   - Bind mounts always do: a pre-existing host directory carries data written
+//     by the old root-based ADCM, and a fresh one is created root-owned by engine
+//   - Named volumes only when they already exist
+func mountNeedsChown(ctx context.Context, comp *compose.Compose, prj *composeTypes.Project, mnt composeTypes.ServiceVolumeConfig) (bool, error) {
+	switch mnt.Type {
+	case composeTypes.VolumeTypeBind:
+		return true, nil
+	case composeTypes.VolumeTypeVolume:
+		name := mnt.Source
+		if v, ok := prj.Volumes[mnt.Source]; ok && len(v.Name) > 0 {
+			name = v.Name
+		}
+		return comp.VolumeExists(ctx, name)
+	default:
+		return false, nil
+	}
+}
+
 func mountOpt(sys, user string) helpers.Mapping {
 	opts := helpers.Mapping{}
 	// podman
@@ -753,7 +834,9 @@ func mountOpt(sys, user string) helpers.Mapping {
 
 	if len(user) > 0 {
 		usr := parseUidGidFromUser(user)
-		opts["uid"] = usr.UID
+		if len(usr.UID) > 0 {
+			opts["uid"] = usr.UID
+		}
 		if len(usr.GID) > 0 {
 			opts["gid"] = usr.GID
 		}
@@ -762,14 +845,72 @@ func mountOpt(sys, user string) helpers.Mapping {
 	return opts
 }
 
+// imageUsers pulls the images of the given services, when the daemon does
+// not have them, and reports the user each image runs as.
+//
+// uidOnly cuts the user down to its uid, for dockerd below v28.0.0, which
+// mis-copies secrets when the user is uid:gid.
+func imageUsers(ctx context.Context, comp *compose.Compose, prj *composeTypes.Project,
+	svcNames []string, uidOnly bool) (map[string]string, error) {
+	users := map[string]string{}
+	for _, name := range svcNames {
+		image := prj.Services[name].Image
+		if _, ok := users[image]; ok {
+			continue
+		}
+
+		if err := comp.Pull(ctx, prj, compose.DefaultPlatform, name); err != nil {
+			return nil, err
+		}
+
+		user, err := comp.ImageUser(ctx, image)
+		if err != nil {
+			return nil, fmt.Errorf("cannot resolve the user of image %q: %v", image, err)
+		}
+
+		if uidOnly {
+			user = strings.SplitN(user, ":", 2)[0]
+		}
+
+		users[image] = user
+	}
+
+	return users, nil
+}
+
+// adcmSecretsSource names the service whose x-secrets hold the credentials svc
+// runs with. The label names the ADCM instance that owns them -- carried by the
+// workers and by every ADCM instance but the primary, all of which share one
+// database and secret storage.
+func adcmSecretsSource(name string, svc composeTypes.ServiceConfig) string {
+	if adcmName := svc.Labels[compose.ADAppAdcmLabelKey]; len(adcmName) > 0 {
+		return adcmName
+	}
+
+	return name
+}
+
 func parseUidGidFromUser(u string) helpers.Secret {
 	sec := helpers.Secret{}
-	userParts := strings.Split(u, ":")
+	userParts := strings.SplitN(u, ":", 2)
+	if !numericID(userParts[0]) {
+		return sec
+	}
+
 	sec.UID = userParts[0]
-	if len(userParts) > 1 {
+	if len(userParts) > 1 && numericID(userParts[1]) {
 		sec.GID = userParts[1]
 	}
 	return sec
+}
+
+func numericID(s string) bool {
+	if len(s) == 0 {
+		return false
+	}
+
+	_, err := strconv.Atoi(s)
+	return err == nil
 }
 
 func fillPgInitFile(pg *types.PGInit, sec map[string]string) {

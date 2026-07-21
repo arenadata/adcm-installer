@@ -17,6 +17,7 @@ package services
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/arenadata/adcm-installer/assets"
@@ -27,20 +28,30 @@ import (
 	composeUtils "github.com/docker/compose/v2/pkg/utils"
 )
 
-func ChownContainer(prj *composeTypes.Project, svc composeTypes.ServiceConfig) string {
-	var mounts []string
+func ChownContainer(prj *composeTypes.Project, svc composeTypes.ServiceConfig, recursive bool) string {
+	chownFlags := "-v"
+	if recursive {
+		chownFlags = "-Rv"
+	}
+
+	var targets []string
 	for _, mnt := range svc.Volumes {
-		mounts = append(mounts, mnt.Target)
+		targets = append(targets, mnt.Target)
+	}
+
+	image := assets.ImageName
+	if namedUser(svc.User) {
+		image = svc.Image
 	}
 
 	newSvc := composeTypes.ServiceConfig{
 		Name:       "chown-" + svc.Name,
 		User:       "0:0",
-		Image:      assets.ImageName,
+		Image:      image,
 		Entrypoint: composeTypes.ShellCommand{"/bin/sh"},
 		Command: []string{
 			"-cex",
-			fmt.Sprintf("chown -v %s %s", svc.User, strings.Join(mounts, " ")),
+			fmt.Sprintf("chown %s %s %s", chownFlags, svc.User, strings.Join(targets, " ")),
 		},
 		Volumes:  svc.Volumes,
 		Profiles: []string{"chown", InitContainerProfile},
@@ -49,6 +60,19 @@ func ChownContainer(prj *composeTypes.Project, svc composeTypes.ServiceConfig) s
 	setCustomLabels(prj, &newSvc)
 	prj.Services[newSvc.Name] = newSvc
 	return newSvc.Name
+}
+
+func namedUser(u string) bool {
+	if len(u) == 0 {
+		return false
+	}
+
+	for _, part := range strings.SplitN(u, ":", 2) {
+		if _, err := strconv.Atoi(part); err != nil {
+			return true
+		}
+	}
+	return false
 }
 
 func InitContainer(prj *composeTypes.Project, svc composeTypes.ServiceConfig) string {
@@ -97,6 +121,8 @@ func PauseContainer(prj *composeTypes.Project) {
 }
 
 func setCustomLabels(prj *composeTypes.Project, svc *composeTypes.ServiceConfig) {
+	svc.ContainerName = prj.Name + "-" + svc.Name
+
 	svc.CustomLabels = make(composeTypes.Labels)
 	svc.CustomLabels.
 		Add(api.ProjectLabel, prj.Name).

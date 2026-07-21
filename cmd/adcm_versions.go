@@ -17,10 +17,7 @@ package cmd
 
 import (
 	"github.com/arenadata/adcm-installer/internal/services"
-	"github.com/arenadata/adcm-installer/pkg/registry-client"
 
-	"github.com/blang/semver/v4"
-	"github.com/distribution/reference"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 )
@@ -43,28 +40,10 @@ func init() {
 func listVersions(cmd *cobra.Command, _ []string) {
 	logger := log.WithField("command", "adcm-versions")
 
-	distributionRef, err := reference.ParseNormalizedNamed(services.ADCMImage)
+	versions, err := services.RegistryVersions(services.ADCMImage)
 	if err != nil {
 		logger.Fatal(err)
 	}
-
-	domain := reference.Domain(distributionRef)
-	reg := client.NewRegistryClient(domain)
-
-	tags, err := reg.Tags(reference.Path(distributionRef))
-	if err != nil {
-		logger.Fatal(err)
-	}
-
-	var versions []semver.Version
-	for _, tag := range tags {
-		ver, err := semver.Parse(tag)
-		if err == nil {
-			versions = append(versions, ver)
-		}
-	}
-
-	semver.Sort(versions)
 
 	i := len(versions) - 1
 	end := 0

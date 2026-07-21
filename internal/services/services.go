@@ -60,6 +60,9 @@ const (
 	SecretStorageFileSystem = "FileSystem"
 	SecretStorageVault      = "Vault"
 
+	JobExecEnvLocal  = "local"
+	JobExecEnvCelery = "celery"
+
 	VaultTypeEmbedded = "embedded"
 	VaultTypeExternal = "external"
 
@@ -68,9 +71,12 @@ const (
 	VaultClientCertKey = "vault-client-cert"
 	VaultClientKeyKey  = "vault-client-key"
 
+	AdcmUrlEnv                 = "DEFAULT_ADCM_URL"
+	JobExecEnvEnv              = "SCHEDULER_JOB_EXECUTION_ENVIRONMENT"
 	SecretBackendEnv           = "SECRET_BACKEND"
 	SecretBackendEnvFileSystem = "FileSystemBackend"
 	SecretBackendEnvVault      = "VaultBackend"
+	ConsulUrlEnv               = "CONSUL_URL"
 	VaultUrlEnv                = "VAULT_URL"
 	VaultMountPointEnv         = "VAULT_MOUNT_POINT"
 	VaultTokenFileEnv          = "VAULT_TOKEN_FILE"
@@ -83,6 +89,7 @@ const (
 	ConsulName = "consul"
 	VaultName  = "vault"
 	PauseName  = "pause"
+	WorkerName = "worker"
 
 	ConfigJson = "config.json"
 	PemKey     = "key.pem"
@@ -120,6 +127,11 @@ var (
 		VaultTypeEmbedded,
 		VaultTypeExternal,
 	}
+
+	allowJobExecEnvs = []string{
+		JobExecEnvLocal,
+		JobExecEnvCelery,
+	}
 )
 
 type XSecrets struct {
@@ -132,6 +144,7 @@ type XSecrets struct {
 type InitConfig struct {
 	SecretStorage string `yaml:"secret-storage"`
 	VaultType     string `yaml:"vault-type"`
+	JobExecEnv    string `yaml:"job-execution-environment"`
 
 	Adcm   AdcmConfig   `yaml:",inline"`
 	Adpg   AdpgConfig   `yaml:",inline"`
@@ -145,7 +158,14 @@ type Project struct {
 	config             *InitConfig
 	interactive        bool
 	crypt              secrets.Secrets
-	vaultMountPoints   map[string]bool
+
+	// adcmVaultStorage records whether the ADCM instances keep their secrets
+	// in Vault, settled once for the whole installation
+	adcmVaultStorage bool
+
+	// adcmHealthCheck records whether the ADCM release serves the liveness
+	// probe, settled once for the whole installation
+	adcmHealthCheck bool
 }
 
 func New(name string, opts ...ProjectOption) (*Project, error) {
@@ -170,6 +190,10 @@ func New(name string, opts ...ProjectOption) (*Project, error) {
 }
 
 func (prj *Project) Build() error {
+	// settled here rather than in setDefaults: it reads the registry, and
+	// constructing a Project must not depend on the network
+	prj.resolveAdcmTag()
+
 	if prj.interactive {
 		adcmCount := strconv.Itoa(int(prj.config.Adcm.Count))
 		checkErr(readValue(&prj.config.Adcm.Count, &prompt{msg: "Number of ADCM instances", def: adcmCount}))
@@ -179,23 +203,91 @@ func (prj *Project) Build() error {
 		return err
 	}
 
+	if err := prj.resolveJobExecEnv(); err != nil {
+		return err
+	}
+
 	prj.consul()
 	prj.adpg()
 	prj.vault()
 
-	if prj.config.Adcm.Count > 1 {
-		for i := uint8(1); i <= prj.config.Adcm.Count; i++ {
-			prj.adcm(fmt.Sprintf("adcm-%d", i))
-		}
-	} else {
-		prj.adcm("")
-	}
+	prj.adcmInstances()
 
 	for name := range prj.prj.Services {
 		prj.AppendHelpers(sharedHelpers(name)...)
 	}
 
-	return prj.ApplyHelpers()
+	if err := prj.ApplyHelpers(); err != nil {
+		return err
+	}
+
+	// a worker is a copy of the finished ADCM service -- it takes its image,
+	// environment, volumes and secrets -- so it is built once the helpers above
+	// have been applied, and writes into the project directly rather than
+	// appending helpers of its own
+	prj.workerInstances()
+
+	return nil
+}
+
+// resolveJobExecEnv settles how ADCM runs its jobs and, with it, how many worker
+// services are generated: local runs the jobs inside ADCM and needs none, celery
+// hands them to standalone Celery workers.
+func (prj *Project) resolveJobExecEnv() error {
+	config := prj.config
+
+	if len(config.JobExecEnv) > 0 && !slices.Contains(allowJobExecEnvs, config.JobExecEnv) {
+		return fmt.Errorf("unknown job-execution-environment %q, allowed values: %s",
+			config.JobExecEnv, strings.Join(allowJobExecEnvs, ", "))
+	}
+
+	if prj.interactive && len(config.JobExecEnv) == 0 {
+		envPrompt := &prompt{
+			msg:  "Select Job Execution Environment:",
+			def:  JobExecEnvLocal,
+			opts: allowJobExecEnvs,
+			help: "local runs jobs inside ADCM, celery runs them in standalone ADCM worker services",
+		}
+		checkErr(readValue(&config.JobExecEnv, envPrompt))
+	}
+
+	if len(config.JobExecEnv) == 0 {
+		// an explicitly requested worker count is a request for celery
+		config.JobExecEnv = JobExecEnvLocal
+		if config.Adcm.WorkerCount != nil && *config.Adcm.WorkerCount > 0 {
+			config.JobExecEnv = JobExecEnvCelery
+		}
+	}
+
+	if config.JobExecEnv != JobExecEnvCelery {
+		if config.Adcm.WorkerCount != nil && *config.Adcm.WorkerCount > 0 {
+			return fmt.Errorf("adcm-worker-count is only allowed when job-execution-environment is %q",
+				JobExecEnvCelery)
+		}
+
+		config.Adcm.WorkerCount = utils.Ptr(uint8(0))
+		return nil
+	}
+
+	if config.Adcm.WorkerCount == nil {
+		config.Adcm.WorkerCount = utils.Ptr(uint8(1))
+	}
+
+	if prj.interactive {
+		workerCount := *config.Adcm.WorkerCount
+		checkErr(readValue(&workerCount, &prompt{
+			msg: "Number of ADCM worker instances:",
+			def: strconv.Itoa(int(workerCount)),
+		}))
+		config.Adcm.WorkerCount = &workerCount
+	}
+
+	if *config.Adcm.WorkerCount == 0 {
+		return fmt.Errorf("adcm-worker-count must be greater than 0 when job-execution-environment is %q",
+			JobExecEnvCelery)
+	}
+
+	return nil
 }
 
 func (prj *Project) resolveSecretStorage() error {
@@ -436,6 +528,8 @@ func setDefaults(config *InitConfig) {
 	if config.Adcm.Count < 1 {
 		config.Adcm.Count = 1
 	}
+	// Adcm.WorkerCount stays nil here: "not configured" is resolved from the
+	// job execution environment in resolveJobExecEnv
 	if config.Adcm.DBPort == 0 {
 		config.Adcm.DBPort = ADPGPublishPort
 	}
@@ -456,9 +550,6 @@ func setDefaults(config *InitConfig) {
 	}
 	if len(config.Adcm.Image) == 0 {
 		config.Adcm.Image = ADCMImage
-	}
-	if len(config.Adcm.Tag) == 0 {
-		config.Adcm.Tag = ADCMTag
 	}
 	if hostIp := utils.HostIp(); len(hostIp) > 0 {
 		config.Adcm.ip = hostIp
@@ -556,6 +647,13 @@ func WithAdcmCount(n uint8) ProjectOption {
 	}
 }
 
+func WithAdcmWorkerCount(n uint8) ProjectOption {
+	return func(p *Project) error {
+		p.config.Adcm.WorkerCount = &n
+		return nil
+	}
+}
+
 func WithConfigFile(file string) ProjectOption {
 	return func(p *Project) error {
 		if len(file) == 0 {
@@ -585,4 +683,8 @@ func sharedHelpers(svcName string) helpers.ModHelpers {
 		//compose.PullPolicy(svcName, composeTypes.PullPolicyAlways),
 		helpers.Network(svcName, compose.DefaultNetwork, nil),
 	}
+}
+
+func AdcmFamilyService(appType string) bool {
+	return appType == AdcmName || appType == WorkerName
 }
