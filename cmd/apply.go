@@ -348,7 +348,7 @@ func applyProject(cmd *cobra.Command, _ []string) {
 	// ADCM 3.0+ migration: chown the ownership of already-existing data
 	// volumes/bind mounts to the unprivileged user the container now runs as.
 	// The mounts are scanned first so the image is pulled and inspected just once
-	migrated := map[string]bool{}
+	migrated := map[string]struct{}{}
 	migrations := make(map[string][]composeTypes.ServiceVolumeConfig, len(adcmFamilyServices))
 	needUser := false
 	for _, name := range adcmFamilyServices {
@@ -359,10 +359,11 @@ func applyProject(cmd *cobra.Command, _ []string) {
 
 		for _, mnt := range svc.Volumes {
 			// the ADCM services and their workers share the data volume
-			if migrated[string(mnt.Type)+":"+mnt.Source] {
+			mountKey := string(mnt.Type) + ":" + mnt.Source
+			if _, ok := migrated[mountKey]; ok {
 				continue
 			}
-			migrated[string(mnt.Type)+":"+mnt.Source] = true
+			migrated[mountKey] = struct{}{}
 
 			needsChown, err := mountNeedsChown(cmd.Context(), comp, prj, mnt)
 			if err != nil {
