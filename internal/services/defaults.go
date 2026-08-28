@@ -17,12 +17,17 @@ package services
 
 const (
 	ADCMImage                 = "hub.arenadata.io/adcm/adcm"
-	ADCMTag                   = "2.12.0"
+	ADCMTag                   = "3.0.0"
 	ADCMPublishPort    uint16 = 8000
 	ADCMPublishSSLPort uint16 = 8443
 	ADCMMountPath             = "/adcm/data"
 
-	ADCMVaultMinTag = "2.12.0"
+	ADCMVaultMinTag        = "2.12.0"
+	ADCMUnprivilegedMinTag = "3.0.0"
+	ADCMWorkerMinTag       = "3.0.0"
+	ADCMHealthCheckMinTag  = "3.0.0"
+
+	ADCMLivenessProbePath = "/api/health/live"
 
 	ADPGImage                = "hub.arenadata.io/adcm/postgres"
 	ADPGTag                  = "v16.3.1"

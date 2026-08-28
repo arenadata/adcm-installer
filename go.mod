@@ -9,6 +9,7 @@ require (
 	github.com/arenadata/adcm-installer/pkg/vault/unseal/image v1.0.0
 	github.com/blang/semver/v4 v4.0.0
 	github.com/compose-spec/compose-go/v2 v2.6.2
+	github.com/containerd/errdefs v1.0.0
 	github.com/distribution/reference v0.6.0
 	github.com/docker/cli v28.3.1+incompatible
 	github.com/docker/compose/v2 v2.36.0
@@ -50,7 +51,6 @@ require (
 	github.com/containerd/containerd/api v1.9.0 // indirect
 	github.com/containerd/containerd/v2 v2.1.0 // indirect
 	github.com/containerd/continuity v0.4.5 // indirect
-	github.com/containerd/errdefs v1.0.0 // indirect
 	github.com/containerd/errdefs/pkg v0.3.0 // indirect
 	github.com/containerd/log v0.1.0 // indirect
 	github.com/containerd/platforms v1.0.0-rc.1 // indirect
